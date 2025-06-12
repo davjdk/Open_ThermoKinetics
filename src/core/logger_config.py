@@ -19,6 +19,8 @@ class LoggerManager:
         log_file: Optional[str] = None,
         max_file_size: int = 10 * 1024 * 1024,  # 10MB
         backup_count: int = 5,
+        enable_aggregation: bool = False,
+        aggregation_config: Optional[dict] = None,
     ) -> None:
         """
         Configure application-wide logging with both console and file handlers.
@@ -30,6 +32,8 @@ class LoggerManager:
             log_file: Path to log file (defaults to logs/solid_state_kinetics.log)
             max_file_size: Maximum size of log file before rotation
             backup_count: Number of backup files to keep
+            enable_aggregation: Whether to enable log aggregation
+            aggregation_config: Configuration dict for log aggregation
         """
         if cls._configured:
             return
@@ -43,7 +47,9 @@ class LoggerManager:
         root_logger.setLevel(logging.DEBUG)
 
         # Clear any existing handlers to avoid duplicates
-        root_logger.handlers.clear()  # Create formatters
+        root_logger.handlers.clear()
+
+        # Create formatters
         detailed_formatter = logging.Formatter(
             "%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
@@ -70,7 +76,34 @@ class LoggerManager:
         )
         file_handler.setLevel(file_level)
         file_handler.setFormatter(detailed_formatter)
-        root_logger.addHandler(file_handler)
+        root_logger.addHandler(file_handler)  # Log aggregation handler
+        if enable_aggregation:
+            try:
+                from src.log_aggregator import AggregatingHandler, AggregationConfig
+
+                # Create aggregation configuration
+                agg_config = AggregationConfig()
+                if aggregation_config:
+                    # Update config with provided values
+                    for key, value in aggregation_config.items():
+                        if hasattr(agg_config, key):
+                            setattr(agg_config, key, value)
+
+                # Create aggregating handler that wraps the console handler
+                aggregating_handler = AggregatingHandler(target_handler=console_handler, config=agg_config)
+                aggregating_handler.setLevel(console_level)
+                aggregating_handler.setFormatter(console_formatter)
+
+                # Replace console handler with aggregating handler
+                root_logger.removeHandler(console_handler)
+                root_logger.addHandler(aggregating_handler)
+
+                root_logger.info("Log aggregation enabled")
+            except Exception as e:
+                root_logger.error(f"Failed to configure log aggregation: {e}")
+                # Fallback: keep original console handler
+                if console_handler not in root_logger.handlers:
+                    root_logger.addHandler(console_handler)
 
         # Log the configuration
         root_logger.info("Logging configured successfully")
