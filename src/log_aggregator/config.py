@@ -6,6 +6,7 @@ system, including buffer management and pattern detection parameters.
 """
 
 from dataclasses import dataclass
+from typing import Dict
 
 
 @dataclass
@@ -32,6 +33,22 @@ class AggregationConfig:
     pattern_similarity_threshold: float = 0.8
     """Threshold for considering messages as similar (0.0 to 1.0)"""
 
+    # Enhanced pattern detection (Stage 2)
+    enhanced_patterns_enabled: bool = True
+    """Whether to use enhanced pattern detection with metadata"""
+
+    pattern_type_priorities: Dict[str, int] = None
+    """Priority mapping for different pattern types (higher number = higher priority)"""
+
+    pattern_time_windows: Dict[str, float] = None
+    """Time windows in seconds for different pattern types"""
+
+    min_cascade_depth: int = 3
+    """Minimum depth for cascade pattern detection"""
+
+    max_pattern_metadata_size: int = 1000
+    """Maximum size of metadata per pattern in characters"""
+
     # Performance settings
     max_processing_time: float = 0.1
     """Maximum time in seconds allowed for processing one buffer flush"""
@@ -42,6 +59,28 @@ class AggregationConfig:
     # Statistics
     collect_statistics: bool = True
     """Whether to collect and log aggregation statistics"""
+
+    def __post_init__(self):
+        """Initialize default values for complex fields."""
+        if self.pattern_type_priorities is None:
+            self.pattern_type_priorities = {
+                "plot_lines_addition": 5,
+                "cascade_component_initialization": 4,
+                "request_response_cycle": 3,
+                "file_operations": 2,
+                "gui_updates": 1,
+                "basic_similarity": 0,
+            }
+
+        if self.pattern_time_windows is None:
+            self.pattern_time_windows = {
+                "plot_lines_addition": 2.0,
+                "cascade_component_initialization": 5.0,
+                "request_response_cycle": 1.0,
+                "file_operations": 10.0,
+                "gui_updates": 0.5,
+                "basic_similarity": 5.0,
+            }
 
     @classmethod
     def default(cls) -> "AggregationConfig":
@@ -69,6 +108,10 @@ class AggregationConfig:
         if not (0.0 <= self.pattern_similarity_threshold <= 1.0):
             return False
         if self.max_processing_time <= 0:
+            return False
+        if self.min_cascade_depth < 2:
+            return False
+        if self.max_pattern_metadata_size <= 0:
             return False
 
         return True

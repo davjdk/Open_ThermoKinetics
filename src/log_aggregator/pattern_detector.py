@@ -8,9 +8,20 @@ similar log records that can be aggregated together.
 import difflib
 import re
 from dataclasses import dataclass
-from typing import Dict, List
+from datetime import datetime, timedelta
+from typing import Any, Dict, List
 
 from .buffer_manager import BufferedLogRecord
+
+# Enhanced pattern types for Stage 2
+PATTERN_TYPES = {
+    "plot_lines_addition": "Addition of lines to plot",
+    "cascade_component_initialization": "Cascade component initialization",
+    "request_response_cycle": "Request-response cycles",
+    "file_operations": "File operations",
+    "gui_updates": "GUI updates",
+    "basic_similarity": "Basic similarity pattern",  # fallback for Stage 1 patterns
+}
 
 
 @dataclass
@@ -40,6 +51,50 @@ class LogPattern:
         self.records.append(record)
         self.count += 1
         self.last_seen = record.timestamp.timestamp()
+
+
+@dataclass
+class PatternGroup:
+    """Represents a group of patterns with enhanced metadata for advanced analysis."""
+
+    pattern_type: str
+    """Type of the pattern (plot_lines_addition, cascade_component_initialization, etc.)"""
+
+    records: List[BufferedLogRecord]
+    """List of log records that belong to this pattern group"""
+
+    start_time: datetime
+    """When this pattern group was first detected"""
+
+    end_time: datetime
+    """When this pattern group was last updated"""
+
+    metadata: Dict[str, Any]
+    """Additional metadata specific to the pattern type"""
+
+    def __post_init__(self):
+        """Initialize metadata if not provided."""
+        if self.metadata is None:
+            self.metadata = {}
+
+    @property
+    def duration(self) -> timedelta:
+        """Duration of the pattern group."""
+        return self.end_time - self.start_time
+
+    @property
+    def count(self) -> int:
+        """Number of records in this pattern group."""
+        return len(self.records)
+
+    def add_record(self, record: BufferedLogRecord) -> None:
+        """Add a record to this pattern group."""
+        self.records.append(record)
+        self.end_time = record.timestamp
+
+    def get_table_suitable_flag(self) -> bool:
+        """Check if this pattern group is suitable for tabular representation."""
+        return self.metadata.get("table_suitable", False)
 
 
 class PatternDetector:
@@ -206,3 +261,204 @@ class PatternDetector:
         """Clear all stored patterns."""
         self._patterns.clear()
         self._next_pattern_id = 1
+
+    def detect_pattern_groups(self, records: List[BufferedLogRecord]) -> List[PatternGroup]:
+        """
+        Detect enhanced pattern groups with metadata.
+
+        Args:
+            records: List of buffered log records to analyze
+
+        Returns:
+            List of pattern groups with enhanced metadata
+        """
+        if not records:
+            return []
+
+        # Group records by enhanced patterns
+        grouped_records = self._group_by_enhanced_patterns(records)
+
+        # Process each group to create PatternGroup objects
+        pattern_groups = []
+        for pattern_type, group_records in grouped_records.items():
+            if len(group_records) >= 2:  # Minimum for a pattern
+                pattern_group = self._create_pattern_group(pattern_type, group_records)
+                pattern_groups.append(pattern_group)
+
+        return pattern_groups
+
+    def _group_by_enhanced_patterns(self, records: List[BufferedLogRecord]) -> Dict[str, List[BufferedLogRecord]]:
+        """Group records by enhanced pattern types."""
+        groups: Dict[str, List[BufferedLogRecord]] = {}
+
+        for record in records:
+            pattern_key = self._get_enhanced_pattern_key(record)
+
+            if pattern_key not in groups:
+                groups[pattern_key] = []
+            groups[pattern_key].append(record)
+
+        return groups
+
+    def _get_enhanced_pattern_key(self, record: BufferedLogRecord) -> str:
+        """Determine the enhanced pattern type for a record."""
+        message = record.record.getMessage()
+        message_lower = message.lower()
+
+        # Check for plot lines addition pattern
+        if "Adding a new line" in message and "to the plot" in message:
+            return "plot_lines_addition"
+
+        # Check for cascade initialization pattern
+        if "Initializing" in message and hasattr(record.record, "module"):
+            return "cascade_component_initialization"
+
+        # Check for request-response cycle pattern
+        if any(keyword in message_lower for keyword in ["request", "response", "handling", "processing"]):
+            return "request_response_cycle"
+
+        # Check for file operations pattern
+        if any(keyword in message_lower for keyword in ["loading", "saving", "reading", "writing", "file"]):
+            return "file_operations"
+
+        # Check for GUI updates pattern
+        if any(keyword in message_lower for keyword in ["updating", "refreshing", "redrawing", "widget", "gui"]):
+            return "gui_updates"
+
+        # Fallback to basic similarity pattern
+        return "basic_similarity"
+
+    def _create_pattern_group(self, pattern_type: str, records: List[BufferedLogRecord]) -> PatternGroup:
+        """Create a PatternGroup from records of the same enhanced pattern type."""
+        if not records:
+            raise ValueError("Cannot create pattern group from empty records list")
+
+        start_time = min(r.timestamp for r in records)
+        end_time = max(r.timestamp for r in records)
+
+        # Generate metadata based on pattern type
+        metadata = self._generate_pattern_metadata(pattern_type, records)
+
+        return PatternGroup(
+            pattern_type=pattern_type,
+            records=records.copy(),
+            start_time=start_time,
+            end_time=end_time,
+            metadata=metadata,
+        )
+
+    def _generate_pattern_metadata(self, pattern_type: str, records: List[BufferedLogRecord]) -> Dict[str, Any]:
+        """Generate metadata for a specific pattern type."""
+        metadata = {
+            "table_suitable": True,  # Most enhanced patterns are table suitable
+            "record_count": len(records),
+            "time_span_ms": (max(r.timestamp for r in records) - min(r.timestamp for r in records)).total_seconds()
+            * 1000,
+        }
+
+        if pattern_type == "plot_lines_addition":
+            metadata.update(self._extract_plot_lines_metadata(records))
+        elif pattern_type == "cascade_component_initialization":
+            metadata.update(self._extract_cascade_metadata(records))
+        elif pattern_type == "request_response_cycle":
+            metadata.update(self._extract_request_response_metadata(records))
+        elif pattern_type == "file_operations":
+            metadata.update(self._extract_file_operations_metadata(records))
+        elif pattern_type == "gui_updates":
+            metadata.update(self._extract_gui_updates_metadata(records))
+        else:
+            # Basic similarity pattern - less suitable for tables
+            metadata["table_suitable"] = False
+
+        return metadata
+
+    def _extract_plot_lines_metadata(self, records: List[BufferedLogRecord]) -> Dict[str, Any]:
+        """Extract metadata specific to plot lines addition pattern."""
+        line_names = []
+
+        for record in records:
+            message = record.record.getMessage()
+            # Extract line name from message like "Adding a new line 'F1/3' to the plot."
+            match = re.search(r"Adding a new line '([^']+)' to the plot", message)
+            if match:
+                line_names.append(match.group(1))
+
+        total_time = (max(r.timestamp for r in records) - min(r.timestamp for r in records)).total_seconds() * 1000
+        avg_line_time = total_time / len(records) if records else 0
+
+        return {"line_names": line_names, "unique_lines": len(set(line_names)), "avg_line_time": avg_line_time}
+
+    def _extract_cascade_metadata(self, records: List[BufferedLogRecord]) -> Dict[str, Any]:
+        """Extract metadata specific to cascade initialization pattern."""
+        components = []
+
+        for record in records:
+            message = record.record.getMessage()
+            # Extract component name from message like "Initializing UserGuideTab"
+            match = re.search(r"Initializing (\w+)", message)
+            if match:
+                components.append(match.group(1))
+
+        return {
+            "components": components,
+            "initialization_order": components,  # preserves order from records
+            "cascade_depth": len(components),
+        }
+
+    def _extract_request_response_metadata(self, records: List[BufferedLogRecord]) -> Dict[str, Any]:
+        """Extract metadata specific to request-response cycle pattern."""
+        request_count = 0
+        response_count = 0
+
+        for record in records:
+            message = record.record.getMessage().lower()
+            if "request" in message:
+                request_count += 1
+            elif "response" in message:
+                response_count += 1
+
+        return {
+            "request_count": request_count,
+            "response_count": response_count,
+            "cycle_balance": abs(request_count - response_count),
+        }
+
+    def _extract_file_operations_metadata(self, records: List[BufferedLogRecord]) -> Dict[str, Any]:
+        """Extract metadata specific to file operations pattern."""
+        operation_types = set()
+        file_extensions = set()
+
+        for record in records:
+            message = record.record.getMessage().lower()
+
+            # Detect operation type
+            if "loading" in message or "reading" in message:
+                operation_types.add("read")
+            elif "saving" in message or "writing" in message:
+                operation_types.add("write")
+
+            # Extract file extensions
+            extensions = re.findall(r"\.(\w+)", message)
+            file_extensions.update(extensions)
+
+        return {
+            "operation_types": list(operation_types),
+            "file_extensions": list(file_extensions),
+            "unique_operations": len(operation_types),
+        }
+
+    def _extract_gui_updates_metadata(self, records: List[BufferedLogRecord]) -> Dict[str, Any]:
+        """Extract metadata specific to GUI updates pattern."""
+        update_types = set()
+
+        for record in records:
+            message = record.record.getMessage().lower()
+
+            if "updating" in message:
+                update_types.add("update")
+            elif "refreshing" in message:
+                update_types.add("refresh")
+            elif "redrawing" in message:
+                update_types.add("redraw")
+
+        return {"update_types": list(update_types), "unique_update_types": len(update_types)}
