@@ -6,7 +6,41 @@ system, including buffer management and pattern detection parameters.
 """
 
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, List, Optional
+
+
+@dataclass
+class TabularFormattingConfig:
+    """Configuration for tabular formatting of aggregated patterns."""
+
+    enabled: bool = True
+    """Whether tabular formatting is enabled"""
+
+    max_table_width: int = 120
+    """Maximum width of generated tables in characters"""
+
+    max_rows_per_table: int = 20
+    """Maximum number of rows per table"""
+
+    ascii_tables: bool = True
+    """Whether to use ASCII table formatting"""
+
+    include_summaries: bool = True
+    """Whether to include summary information below tables"""
+
+    auto_format_patterns: Optional[List[str]] = None
+    """List of pattern types to automatically format as tables"""
+
+    def __post_init__(self):
+        """Initialize default values for complex fields."""
+        if self.auto_format_patterns is None:
+            self.auto_format_patterns = [
+                "plot_lines_addition",
+                "cascade_component_initialization",
+                "request_response_cycle",
+                "file_operations",
+                "gui_updates",
+            ]
 
 
 @dataclass
@@ -49,6 +83,10 @@ class AggregationConfig:
     max_pattern_metadata_size: int = 1000
     """Maximum size of metadata per pattern in characters"""
 
+    # Tabular formatting (Stage 3)
+    tabular_formatting: TabularFormattingConfig = None
+    """Configuration for tabular formatting of patterns"""
+
     # Performance settings
     max_processing_time: float = 0.1
     """Maximum time in seconds allowed for processing one buffer flush"""
@@ -81,6 +119,9 @@ class AggregationConfig:
                 "gui_updates": 0.5,
                 "basic_similarity": 5.0,
             }
+
+        if self.tabular_formatting is None:
+            self.tabular_formatting = TabularFormattingConfig()
 
     @classmethod
     def default(cls) -> "AggregationConfig":

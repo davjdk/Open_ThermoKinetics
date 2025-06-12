@@ -16,6 +16,7 @@ from .aggregation_engine import AggregationEngine
 from .buffer_manager import BufferManager
 from .config import AggregationConfig
 from .pattern_detector import PatternDetector
+from .tabular_formatter import TabularFormatter
 
 
 class AggregatingHandler(logging.Handler):
@@ -47,6 +48,10 @@ class AggregatingHandler(logging.Handler):
 
         self.aggregation_engine = AggregationEngine(min_pattern_entries=self.config.min_pattern_entries)
 
+        # Tabular formatter (Stage 3)
+        self.tabular_formatter = TabularFormatter(config=self.config.tabular_formatting)
+        self.enable_tabular_format = self.config.tabular_formatting.enabled
+
         # Processing control
         self._processing_lock = threading.RLock()
         self._last_process_time = time.time()
@@ -57,6 +62,7 @@ class AggregatingHandler(logging.Handler):
         self._total_records_forwarded = 0
         self._total_processing_runs = 0
         self._total_processing_time = 0.0
+        self._tables_generated = 0
 
         # Logger for internal messages
         self._logger = LoggerManager.get_logger("log_aggregator.realtime_handler")
@@ -109,6 +115,12 @@ class AggregatingHandler(logging.Handler):
                 # Create aggregated records
                 aggregated_records = self.aggregation_engine.process_records(records, patterns)
 
+                # Tabular formatting (Stage 3)
+                if self.enable_tabular_format and patterns:
+                    table_records = self.tabular_formatter.format_patterns_as_tables(patterns)
+                    aggregated_records.extend(table_records)
+                    self._tables_generated += len(table_records)
+
                 # Emit aggregated summaries
                 for aggregated in aggregated_records:
                     self._emit_aggregated_record(aggregated)
@@ -122,7 +134,6 @@ class AggregatingHandler(logging.Handler):
                     self._log_processing_statistics(
                         len(records), len(patterns), len(aggregated_records), processing_time
                     )
-
             except Exception as e:
                 self._logger.error(f"Error processing buffer: {e}")
 
@@ -132,16 +143,29 @@ class AggregatingHandler(logging.Handler):
     def _emit_aggregated_record(self, aggregated_record) -> None:
         """Emit an aggregated record as a log message."""
         try:
-            # Create a log record for the aggregated summary
-            log_record = logging.LogRecord(
-                name=f"aggregator.{aggregated_record.logger_name}",
-                level=getattr(logging, aggregated_record.level),
-                pathname="",
-                lineno=0,
-                msg=aggregated_record.to_log_message(),
-                args=(),
-                exc_info=None,
-            )
+            # Handle both AggregatedLogRecord and BufferedLogRecord (from tabular formatter)
+            if hasattr(aggregated_record, "to_log_message"):
+                # AggregatedLogRecord
+                log_record = logging.LogRecord(
+                    name=f"aggregator.{aggregated_record.logger_name}",
+                    level=getattr(logging, aggregated_record.level),
+                    pathname="",
+                    lineno=0,
+                    msg=aggregated_record.to_log_message(),
+                    args=(),
+                    exc_info=None,
+                )
+            else:
+                # BufferedLogRecord (from tabular formatter)
+                log_record = logging.LogRecord(
+                    name=aggregated_record.logger_name,
+                    level=aggregated_record.level_no,
+                    pathname="",
+                    lineno=0,
+                    msg=aggregated_record.message,
+                    args=(),
+                    exc_info=None,
+                )
 
             # Forward to target handler
             self._forward_to_target(log_record)
@@ -196,6 +220,15 @@ class AggregatingHandler(logging.Handler):
         else:
             self._logger.info("Log aggregation disabled")
 
+    def toggle_tabular_format(self, enabled: bool) -> None:
+        """Enable or disable tabular formatting."""
+        self.enable_tabular_format = enabled
+        self.tabular_formatter.toggle_tabular_format(enabled)
+        if enabled:
+            self._logger.info("Tabular formatting enabled")
+        else:
+            self._logger.info("Tabular formatting disabled")
+
     def get_statistics(self) -> Dict[str, Any]:
         """Get comprehensive statistics about aggregation performance."""
         buffer_stats = self.buffer_manager.get_statistics()
@@ -212,6 +245,8 @@ class AggregatingHandler(logging.Handler):
                     self._total_processing_time / self._total_processing_runs if self._total_processing_runs > 0 else 0
                 ),
                 "enabled": self._enabled,
+                "tables_generated": self._tables_generated,
+                "tabular_formatting_enabled": self.enable_tabular_format,
             },
             "buffer": buffer_stats,
             "patterns": pattern_stats,
@@ -224,6 +259,7 @@ class AggregatingHandler(logging.Handler):
         self._total_records_forwarded = 0
         self._total_processing_runs = 0
         self._total_processing_time = 0.0
+        self._tables_generated = 0
 
         self.buffer_manager.reset_statistics()
         self.pattern_detector.clear_patterns()
