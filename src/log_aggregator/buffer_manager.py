@@ -48,6 +48,7 @@ class BufferManager:
         self.flush_interval = flush_interval
 
         self._buffer: Deque[BufferedLogRecord] = deque()
+        self._context_buffer: Deque[BufferedLogRecord] = deque(maxlen=50)  # For error context
         self._lock = threading.RLock()
         self._last_flush_time = time.time()
 
@@ -66,6 +67,7 @@ class BufferManager:
         with self._lock:
             buffered_record = BufferedLogRecord(record=record, timestamp=datetime.now())
             self._buffer.append(buffered_record)
+            self._context_buffer.append(buffered_record)  # Also add to context buffer
             self._total_records_added += 1
 
     def should_process(self) -> bool:
@@ -125,6 +127,20 @@ class BufferManager:
             cleared_count = len(self._buffer)
             self._buffer.clear()
             return cleared_count
+
+    def get_recent_context(self, max_records: int = 20) -> List[BufferedLogRecord]:
+        """
+        Get recent records for error context analysis.
+
+        Args:
+            max_records: Maximum number of recent records to return
+
+        Returns:
+            List of recent log records for context analysis
+        """
+        with self._lock:
+            # Return last N records from context buffer
+            return list(self._context_buffer)[-max_records:]
 
     def get_statistics(self) -> dict:
         """

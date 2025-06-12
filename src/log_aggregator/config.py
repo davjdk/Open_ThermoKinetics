@@ -87,6 +87,25 @@ class AggregationConfig:
     tabular_formatting: TabularFormattingConfig = None
     """Configuration for tabular formatting of patterns"""
 
+    # Error expansion (Stage 4)
+    error_expansion_enabled: bool = True
+    """Whether error expansion is enabled"""
+
+    error_context_lines: int = 5
+    """Number of preceding context lines to include in error expansion"""
+
+    error_trace_depth: int = 10
+    """Maximum depth of operation trace to analyze for errors"""
+
+    error_immediate_expansion: bool = True
+    """Whether to expand errors immediately when detected"""
+
+    error_threshold_level: str = "WARNING"
+    """Minimum log level to trigger error expansion (WARNING/ERROR/CRITICAL)"""
+
+    error_context_time_window: float = 10.0
+    """Time window in seconds to look for related operations in error context"""
+
     # Performance settings
     max_processing_time: float = 0.1
     """Maximum time in seconds allowed for processing one buffer flush"""

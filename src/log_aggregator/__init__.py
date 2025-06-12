@@ -5,15 +5,17 @@ __version__ = "1.0.0"
 __author__ = "Solid State Kinetics Team"
 
 from .config import AggregationConfig, TabularFormattingConfig
+from .error_expansion import ErrorContext, ErrorExpansionConfig, ErrorExpansionEngine
+from .realtime_handler import AggregatingHandler
 from .tabular_formatter import TableData, TabularFormatter
-
-# Note: AggregatingHandler import disabled temporarily during Stage 1 development
-# from .realtime_handler import AggregatingHandler
 
 __all__ = [
     "AggregationConfig",
     "TabularFormattingConfig",
     "TabularFormatter",
     "TableData",
-    # "AggregatingHandler",
+    "AggregatingHandler",
+    "ErrorExpansionEngine",
+    "ErrorExpansionConfig",
+    "ErrorContext",
 ]

@@ -10,11 +10,15 @@ import threading
 import time
 from typing import Any, Dict, Optional
 
-from src.core.logger_config import LoggerManager
+try:
+    from src.core.logger_config import LoggerManager
+except ImportError:
+    from core.logger_config import LoggerManager
 
 from .aggregation_engine import AggregationEngine
 from .buffer_manager import BufferManager
 from .config import AggregationConfig
+from .error_expansion import ErrorExpansionConfig, ErrorExpansionEngine
 from .pattern_detector import PatternDetector
 from .tabular_formatter import TabularFormatter
 
@@ -50,7 +54,17 @@ class AggregatingHandler(logging.Handler):
 
         # Tabular formatter (Stage 3)
         self.tabular_formatter = TabularFormatter(config=self.config.tabular_formatting)
-        self.enable_tabular_format = self.config.tabular_formatting.enabled
+        self.enable_tabular_format = self.config.tabular_formatting.enabled  # Error expansion engine (Stage 4)
+        error_config = ErrorExpansionConfig(
+            enabled=getattr(self.config, "error_expansion_enabled", True),
+            context_lines=getattr(self.config, "error_context_lines", 5),
+            trace_depth=getattr(self.config, "error_trace_depth", 10),
+            immediate_expansion=getattr(self.config, "error_immediate_expansion", True),
+            error_threshold_level=getattr(self.config, "error_threshold_level", "WARNING"),
+            context_time_window=getattr(self.config, "error_context_time_window", 10.0),
+        )
+        self.error_expansion_engine = ErrorExpansionEngine(config=error_config)
+        self.enable_error_expansion = error_config.enabled
 
         # Processing control
         self._processing_lock = threading.RLock()
@@ -63,6 +77,7 @@ class AggregatingHandler(logging.Handler):
         self._total_processing_runs = 0
         self._total_processing_time = 0.0
         self._tables_generated = 0
+        self._errors_expanded = 0
 
         # Logger for internal messages
         self._logger = LoggerManager.get_logger("log_aggregator.realtime_handler")
@@ -85,6 +100,13 @@ class AggregatingHandler(logging.Handler):
             # Add record to buffer
             self.buffer_manager.add_record(record)
 
+            # Check for immediate error expansion (Stage 4)
+            if self.enable_error_expansion:
+                buffered_record = self.buffer_manager._context_buffer[-1]  # Get the just-added record
+                if self.error_expansion_engine.is_error_record(buffered_record):
+                    self._handle_error_immediately(buffered_record)
+                    return  # Don't forward original error, only expanded version
+
             # Check if we should process the buffer
             if self.buffer_manager.should_process():
                 self._process_buffer()
@@ -97,6 +119,33 @@ class AggregatingHandler(logging.Handler):
             self._logger.error(f"Error in AggregatingHandler.emit: {e}")
             # Fallback: forward original record
             self._forward_to_target(record)
+
+    def _handle_error_immediately(self, error_record) -> None:
+        """
+        Handle error immediately with expanded context.
+
+        Args:
+            error_record: BufferedLogRecord representing the error
+        """
+        try:
+            # Get recent context for error analysis
+            context_records = self.buffer_manager.get_recent_context()
+
+            # Expand the error with context
+            expanded_record = self.error_expansion_engine.expand_error(error_record, context_records)
+
+            # Forward expanded record to target handler
+            self._forward_to_target(expanded_record.record)
+
+            # Update statistics
+            self._errors_expanded += 1
+
+            self._logger.debug(f"Expanded error: {error_record.record.getMessage()[:100]}")
+
+        except Exception as e:
+            self._logger.error(f"Error in immediate error expansion: {e}")
+            # Fallback: forward original record
+            self._forward_to_target(error_record.record)
 
     def _process_buffer(self) -> None:
         """Process buffered records and emit aggregated summaries."""
@@ -229,11 +278,20 @@ class AggregatingHandler(logging.Handler):
         else:
             self._logger.info("Tabular formatting disabled")
 
+    def toggle_error_expansion(self, enabled: bool) -> None:
+        """Enable or disable error expansion."""
+        self.enable_error_expansion = enabled
+        if enabled:
+            self._logger.info("Error expansion enabled")
+        else:
+            self._logger.info("Error expansion disabled")
+
     def get_statistics(self) -> Dict[str, Any]:
         """Get comprehensive statistics about aggregation performance."""
         buffer_stats = self.buffer_manager.get_statistics()
         pattern_stats = self.pattern_detector.get_pattern_statistics()
         aggregation_stats = self.aggregation_engine.get_statistics()
+        error_expansion_stats = self.error_expansion_engine.get_statistics()
 
         return {
             "handler": {
@@ -247,10 +305,13 @@ class AggregatingHandler(logging.Handler):
                 "enabled": self._enabled,
                 "tables_generated": self._tables_generated,
                 "tabular_formatting_enabled": self.enable_tabular_format,
+                "errors_expanded": self._errors_expanded,
+                "error_expansion_enabled": self.enable_error_expansion,
             },
             "buffer": buffer_stats,
             "patterns": pattern_stats,
             "aggregation": aggregation_stats,
+            "error_expansion": error_expansion_stats,
         }
 
     def reset_statistics(self) -> None:
@@ -260,7 +321,9 @@ class AggregatingHandler(logging.Handler):
         self._total_processing_runs = 0
         self._total_processing_time = 0.0
         self._tables_generated = 0
+        self._errors_expanded = 0
 
         self.buffer_manager.reset_statistics()
         self.pattern_detector.clear_patterns()
         self.aggregation_engine.reset_statistics()
+        self.error_expansion_engine.reset_statistics()
