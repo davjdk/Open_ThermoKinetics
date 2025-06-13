@@ -302,9 +302,7 @@ class AggregatingHandler(logging.Handler):
                     msg=safe_get_message(aggregated_record.record),
                     args=(),
                     exc_info=None,
-                )
-
-            # Forward to target handler
+                )  # Forward to target handler
             self._forward_to_target(log_record)
 
         except Exception as e:
@@ -314,7 +312,34 @@ class AggregatingHandler(logging.Handler):
         """Forward a record to the target handler."""
         if self.target_handler:
             try:
-                self.target_handler.emit(record)
+                # Create a safe copy of the record to avoid formatting issues
+                safe_record = logging.LogRecord(
+                    name=record.name,
+                    level=record.levelno,
+                    pathname=record.pathname,
+                    lineno=record.lineno,
+                    msg=safe_get_message(record),  # Use safely formatted message
+                    args=(),  # Clear args since message is already formatted
+                    exc_info=record.exc_info,
+                    func=record.funcName,
+                    sinfo=record.stack_info if hasattr(record, "stack_info") else None,
+                )
+                # Copy additional attributes that might be present
+                for attr in (
+                    "created",
+                    "msecs",
+                    "relativeCreated",
+                    "thread",
+                    "threadName",
+                    "processName",
+                    "process",
+                    "module",
+                    "filename",
+                ):
+                    if hasattr(record, attr):
+                        setattr(safe_record, attr, getattr(record, attr))
+
+                self.target_handler.emit(safe_record)
                 self._total_records_forwarded += 1
             except Exception as e:
                 self._logger.error(f"Error forwarding to target handler: {e}")

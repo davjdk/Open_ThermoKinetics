@@ -29,7 +29,15 @@ class TestRecursionPrevention:
         )
 
         handler.emit(internal_record)  # Should be forwarded directly without aggregation
-        target_handler.emit.assert_called_once_with(internal_record)
+
+        # Check that target handler was called once
+        target_handler.emit.assert_called_once()
+
+        # Check that the forwarded record has the expected properties
+        forwarded_record = target_handler.emit.call_args[0][0]
+        assert forwarded_record.name == "log_aggregator.realtime_handler"
+        assert forwarded_record.levelno == logging.ERROR
+        assert forwarded_record.msg == "Internal error"
 
         # External message - should also be forwarded (but with aggregation processing)
         target_handler.reset_mock()
@@ -40,7 +48,13 @@ class TestRecursionPrevention:
         handler.emit(external_record)
 
         # Should be forwarded (aggregating handler forwards all messages)
-        target_handler.emit.assert_called_once_with(external_record)
+        target_handler.emit.assert_called_once()
+
+        # Check that the forwarded record has the expected properties
+        forwarded_external = target_handler.emit.call_args[0][0]
+        assert forwarded_external.name == "app.module"
+        assert forwarded_external.levelno == logging.INFO
+        assert forwarded_external.msg == "App message"
 
     def test_cascade_error_prevention(self):
         """Test prevention of cascading internal errors."""
@@ -108,7 +122,13 @@ class TestRecursionPrevention:
             handler.emit(internal_record)
 
             # Should be forwarded directly
-            target_handler.emit.assert_called_once_with(internal_record)
+            target_handler.emit.assert_called_once()
+
+            # Check that the forwarded record has the expected properties
+            forwarded_record = target_handler.emit.call_args[0][0]
+            assert forwarded_record.name == pattern
+            assert forwarded_record.levelno == logging.WARNING
+            assert forwarded_record.msg == "Internal message"
 
     def test_error_recovery_mechanism(self):
         """Test that handler can recover from internal errors."""
