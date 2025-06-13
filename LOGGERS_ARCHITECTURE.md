@@ -1,464 +1,483 @@
-# Архитектура системы логирования для анализа кинетики твердофазных реакций
+# Log Aggregation Architecture for solid-state-kinetics
 
-## Архитектурные принципы
+## Architectural Principles
 
-### Основополагающие принципы (ЛОГГИНГ АРХИТЕКТУРНЫЙ МАНИФЕСТ)
-- **Агрегация в реальном времени**: Интеллектуальное группирование связанных записей логов в структурированные сводки
-- **Многоуровневая система файлов**: Раздельное сохранение полных и агрегированных логов с настраиваемой маршрутизацией
-- **Табличное форматирование**: Автоматическое преобразование паттернов в читаемые ASCII-таблицы
-- **Расширение контекста ошибок**: Детальный анализ ошибок с предшествующим контекстом операций
-- **Каскадная агрегация операций**: Группировка связанных операций в цепочки для анализа производительности
-- **Поточная безопасность**: Thread-safe обработка логов с минимальными блокировками
-- **Конфигурируемые пресеты**: Готовые конфигурации для разных сценариев использования
+### Foundational Principles (LOG AGGREGATION ARCHITECTURAL MANIFEST)
+- **Real-time Processing**: Continuous log aggregation with minimal latency through buffering mechanisms
+- **Pattern-driven Aggregation**: Intelligent detection and grouping of similar log messages to reduce noise
+- **Multi-stage Processing Pipeline**: Hierarchical processing through buffer → pattern detection → aggregation → formatting
+- **Adaptive Monitoring**: Context-aware monitoring for optimization processes, performance metrics, and operation tracking
+- **Error Context Expansion**: Comprehensive error analysis with actionable recommendations and root cause investigation
+- **Thread-safe Operations**: Concurrent access support for multi-threaded application environments
+- **Modular Component Design**: Loosely coupled components with clear interfaces for extensibility
 
 ---
 
-## Общая архитектура системы логирования
+## Overall Log Aggregation System Architecture
 
-Система построена на **многоэтапной агрегации логов** с **реальным временем обработки** и **интеллектуальным паттерн детектированием**, обеспечивающей снижение объема логов при сохранении критической информации.
+The log aggregation system implements a **real-time stream processing architecture** with PyQt6 integration, providing **intelligent log analysis** and **structured output formatting** for scientific computation monitoring.
 
-### Центральная система управления логированием
+### Central Processing Pipeline
 
-**LoggerManager** (`src/core/logger_config.py:9-381`) - централизованный менеджер конфигурации:
-- **Двойная файловая система**: основной файл (все логи) + агрегированный файл (только сводки)
-- **Консольная агрегация**: только агрегированные логи выводятся в консоль
-- **Динамическое управление**: runtime переключение компонентов агрегации
-- **Статистика производительности**: детальные метрики агрегации и компрессии
-
-### Архитектура системы файлов логирования
+The system processes logs through a **5-stage pipeline** with parallel monitoring capabilities:
 
 ```mermaid
 graph TB
-    subgraph "Источники логов"
-        APP[Приложение]
-        GUI[GUI компоненты]
-        CORE[Core модули]
-        CALC[Calculations]
+    subgraph "Input Layer"
+        LR[LogRecord] 
+        PL[Python Logging]
     end
     
-    subgraph "Центральный диспетчер"
-        LM[LoggerManager<br/>Двойная файловая система]
+    subgraph "Buffer Management"
+        BM[BufferManager<br/>Time & Size-based<br/>Flushing]
+        BR[BufferedLogRecord<br/>Metadata Container]
     end
     
-    subgraph "Обработчики агрегации"
-        CAH[Console AggregatingHandler]
-        FAH[File AggregatingHandler]
+    subgraph "Pattern Analysis"
+        PD[PatternDetector<br/>Similarity Detection]
+        LP[LogPattern<br/>Template Matching]
+        PG[PatternGroup<br/>Enhanced Metadata]
     end
     
-    subgraph "Система хранения"
-        MF[Main File<br/>logs/solid_state_kinetics.log<br/>ВСЕ ЛОГИ]
-        AF[Aggregated File<br/>logs/aggregated.log<br/>ТОЛЬКО АГРЕГАЦИЯ]
-        CONSOLE[Console Output<br/>ТОЛЬКО АГРЕГАЦИЯ]
+    subgraph "Aggregation Engine"
+        AE[AggregationEngine<br/>Core Logic]
+        ALR[AggregatedLogRecord<br/>Summary Creation]
     end
     
-    APP -->|Все логи| LM
-    GUI -->|Все логи| LM
-    CORE -->|Все логи| LM
-    CALC -->|Все логи| LM
+    subgraph "Output Formatting"
+        TF[TabularFormatter<br/>ASCII Tables]
+        EE[ErrorExpansionEngine<br/>Context Analysis]
+        RH[AggregatingHandler<br/>Integration Layer]
+    end
     
-    LM -->|Raw logs| MF
-    LM -->|Агрегация| CAH
-    LM -->|Агрегация| FAH
+    subgraph "Monitoring Components"
+        OM[OptimizationMonitor<br/>Long-running Processes]
+        PM[PerformanceMonitor<br/>System Metrics]
+        OPM[OperationMonitor<br/>Request Tracking]
+    end
     
-    CAH -->|Агрегированные| CONSOLE
-    FAH -->|Агрегированные| AF
-```
-
-### Пятиэтапная архитектура агрегации
-
-**Этап 1: Буферизация** - `BufferManager` (`src/log_aggregator/buffer_manager.py`)
-- Временное хранение логов с автоматической очисткой
-- Size-based и time-based стратегии флуша
-- Thread-safe операции с блокировками
-
-**Этап 2: Детектирование паттернов** - `PatternDetector` (`src/log_aggregator/pattern_detector.py`)
-- Обнаружение повторяющихся сообщений
-- Группировка по временным окнам
-- Similarity threshold для гибкого матчинга
-
-**Этап 3: Табличное форматирование** - `TabularFormatter` (`src/log_aggregator/tabular_formatter.py`)
-- ASCII-таблицы с адаптивными ширинами колонок
-- Специализированные форматы для разных типов операций
-- Статистические сводки с эмодзи-индикаторами
-
-**Этап 4: Расширение ошибок** - `ErrorExpansionEngine` (`src/log_aggregator/error_expansion.py`)
-- Детальный анализ контекста ошибок
-- Трассировка связанных операций
-- Предложения по исправлению
-
-**Этап 5: Агрегация операций и значений** - `OperationAggregator` + `ValueAggregator`
-- Каскадное группирование связанных операций
-- Компрессия повторяющихся обновлений значений
-- Метрики производительности операций
-
----
-
-## Архитектура компонентов агрегации
-
-### Центральный обработчик реального времени
-
-**AggregatingHandler** (`src/log_aggregator/realtime_handler.py:29-417`) - основной обработчик:
-
-**Структура компонентов**:
-```python
-# Инициализация всех агрегационных компонентов
-self.buffer_manager = BufferManager(max_size=config.buffer_size, flush_interval=config.flush_interval)
-self.pattern_detector = PatternDetector(similarity_threshold=config.pattern_similarity_threshold)
-self.aggregation_engine = AggregationEngine(min_pattern_entries=config.min_pattern_entries)
-self.tabular_formatter = TabularFormatter(config=tabular_config)
-self.error_expansion_engine = ErrorExpansionEngine(config=error_config)
-self.operation_aggregator = OperationAggregator(config=operation_config)
-self.value_aggregator = ValueAggregator(config=value_config)
-```
-
-**Поток обработки логов**:
-1. `emit(record)` - получение исходного лога
-2. `BufferManager.add_record()` - буферизация с временными метками
-3. `PatternDetector.detect_patterns()` - поиск повторяющихся паттернов
-4. `AggregationEngine.aggregate()` - создание агрегированных записей
-5. `TabularFormatter.format_patterns_as_tables()` - преобразование в таблицы
-6. `target_handler.emit()` - вывод в консоль/файл
-
-### Система детектирования паттернов
-
-**PatternDetector** (`src/log_aggregator/pattern_detector.py`) - интеллектуальный анализ:
-
-**Типы паттернов**:
-- **LogPattern**: Простые повторяющиеся сообщения
-- **PatternGroup**: Сложные группы связанных операций
-- **Временные окна**: Группировка по временным интервалам
-- **Similarity matching**: Гибкое сравнение с порогом схожести
-
-**Специализированные детекторы**:
-```python
-# Паттерны операций
-"plot_lines_addition"              # Добавление линий на график
-"cascade_component_initialization" # Инициализация компонентов
-"request_response_cycle"           # Циклы запрос-ответ
-"file_operations"                  # Файловые операции
-"gui_updates"                      # Обновления GUI
-```
-
-### Система табличного форматирования
-
-**TabularFormatter** (`src/log_aggregator/tabular_formatter.py:38-582`) - ASCII таблицы:
-
-**Специализированные форматировщики**:
-
-**Plot Lines Table** - таблица добавления кинетических моделей:
-```
-┌──────────────────────────────────────────────────────┐
-│ 📊 Plot Lines Addition Summary                        │
-├──────────────────────────────────────────────────────┤
-│ # │ Line Name │ Time     │ Duration (ms) │ Status    │
-├───┼───────────┼──────────┼───────────────┼───────────┤
-│ 1 │ F1/3      │ +0.0ms   │ 0.0           │ ✅ Success │
-│ 2 │ F3/4      │ +197.8ms │ 197.8         │ ✅ Success │
-│ 3 │ F3/2      │ +355.3ms │ 355.3         │ ✅ Success │
-└──────────────────────────────────────────────────────┘
-📊 Total: 3 kinetic model lines added in 355.3ms (avg: 118.4ms per line)
-```
-
-**Request-Response Table** - циклы операций:
-```
-┌─────────────────────────────────────────────────────────┐
-│ 🔄 Request-Response Cycles                              │
-├─────────────────────────────────────────────────────────┤
-│ # │ Operation     │ Time      │ Duration (ms) │ Status  │
-├───┼───────────────┼───────────┼───────────────┼─────────┤
-│ 1 │ UPDATE_VALUE  │ 13:13:22  │ 15.3          │ ✅ Complete │
-│ 2 │ GET_DF_DATA   │ 13:13:22  │ 8.7           │ ✅ Complete │
-│ 3 │ SET_VALUE     │ 13:13:22  │ 12.1          │ ⏳ Pending │
-└─────────────────────────────────────────────────────────┘
-📊 Request-Response cycles: 3 operations, avg: 12.0ms
-```
-
-**Адаптивные ширины колонок**:
-- Автоматический расчет на основе содержимого
-- Пропорциональное сжатие при превышении максимальной ширины
-- Минимальные ширины для читаемости
-
-### Система агрегации операций
-
-**OperationAggregator** (`src/log_aggregator/operation_aggregator.py:94-331`) - каскадное группирование:
-
-**OperationGroup структура**:
-```python
-@dataclass
-class OperationGroup:
-    root_operation: str              # Инициирующая операция
-    start_time: datetime            # Начало каскада
-    end_time: datetime              # Завершение каскада
-    operation_count: int            # Количество операций
-    actors: Set[str]                # Участвующие модули
-    operations: List[str]           # Хронологический список операций
-    has_errors: bool                # Наличие ошибок
-    has_warnings: bool              # Наличие предупреждений
-    records: List[BufferedLogRecord] # Все записи для контекста
-```
-
-**Корневые операции каскадов**:
-```python
-root_operations = {
-    "ADD_REACTION", "REMOVE_REACTION",           # Управление реакциями
-    "MODEL_BASED_CALCULATION",                  # Model-based расчеты
-    "DECONVOLUTION",                           # Деконволюция пиков
-    "MODEL_FIT_CALCULATION",                   # Model-fit анализ
-    "MODEL_FREE_CALCULATION",                  # Model-free анализ
-    "LOAD_FILE", "TO_DTG",                     # Файловые операции
-    "SMOOTH_DATA", "SUBTRACT_BACKGROUND",      # Предобработка данных
-    "GET_DF_DATA", "UPDATE_VALUE", "SET_VALUE" # Операции с данными
-}
-```
-
-**Агрегированные записи операций**:
-```
-🔄 OPERATION CASCADE: DECONVOLUTION | ⏱️ 2.341s | 📊 7 operations | 
-🎭 Actors: calculations, file_data, calculation_data | ✅ SUCCESS
-```
-
-### Система расширения ошибок
-
-**ErrorExpansionEngine** (`src/log_aggregator/error_expansion.py`) - детальный анализ:
-
-**Расширенный анализ ошибок**:
-```
-================================================================================
-🚨 DETAILED ERROR ANALYSIS - ERROR
-================================================================================
-📍 Location: realtime_handler.py:166
-⏰ Time: 2025-06-13 13:13:35
-💬 Message: Error in AggregatingHandler.emit: not all arguments converted during string formatting
-
-📋 PRECEDING CONTEXT:
-----------------------------------------
-  1. [DEBUG] Expanded error: Error in AggregatingHandler.emit (0.0s ago)
-  2. [DEBUG] Processed 7 records, found 2 patterns (0.0s ago)
-  3. [DEBUG] Processed 6 records, found 3 patterns (0.0s ago)
-
-🔗 RELATED OPERATIONS:
-----------------------------------------
-  1. [DEBUG] realtime_handler.py:190 - Expanded error: Error in AggregatingHandler.emit
-  2. [ERROR] realtime_handler.py:166 - Error in AggregatingHandler.emit
-
-💡 SUGGESTED ACTIONS:
-----------------------------------------
-  1. Check code in file realtime_handler.py:166
-================================================================================
-```
-
-**Конфигурация расширения**:
-- `context_lines: 5` - количество предшествующих строк контекста
-- `context_time_window: 10.0s` - временное окно поиска связанных операций
-- `trace_depth: 10` - максимальная глубина трассировки операций
-- `error_threshold_level: WARNING` - минимальный уровень для расширения
-
----
-
-## Конфигурационная архитектура
-
-### Иерархическая система конфигурации
-
-**AggregationConfig** (`src/log_aggregator/config.py:95-418`) - главная конфигурация:
-
-**Компонентные конфигурации**:
-```python
-@dataclass
-class AggregationConfig:
-    enabled: bool = True
-    buffer_size: int = 100
-    flush_interval: float = 5.0
-    pattern_similarity_threshold: float = 0.8
-    min_pattern_entries: int = 2
+    LR --> BM
+    BM --> BR
+    BR --> PD
+    PD --> LP
+    LP --> PG
+    PG --> AE
+    AE --> ALR
+    ALR --> TF
+    ALR --> EE
+    TF --> RH
+    EE --> RH
+    RH --> PL
     
-    # Компонентные конфигурации
-    error_expansion: ErrorExpansionConfig
-    tabular_formatting: TabularFormattingConfig  
-    operation_aggregation: OperationAggregationConfig
-    value_aggregation: ValueAggregationConfig
+    AE -.-> OM
+    AE -.-> PM
+    AE -.-> OPM
 ```
 
-**Готовые пресеты конфигурации**:
-- `minimal` - минимальная агрегация для отладки
-- `performance` - оптимизация производительности
-- `detailed` - максимальная детализация для анализа
+### Integration Points
 
-### Runtime управление конфигурацией
+**Python Logging System Integration** (`src/log_aggregator/realtime_handler.py:20-509`):
+- `AggregatingHandler` extends `logging.Handler` for seamless integration
+- Compatible with existing `LoggerManager` infrastructure
+- Optional activation through configuration parameters
+- Pass-through capability for non-aggregated logging
 
-**Динамическое переключение** через LoggerManager:
+**Configuration-driven Activation**:
 ```python
-# Переключение компонентов
-LoggerManager.toggle_aggregation(enabled=True)
-LoggerManager.toggle_error_expansion(enabled=True) 
-LoggerManager.toggle_tabular_format(enabled=True)
-LoggerManager.toggle_operation_aggregation(enabled=True)
-LoggerManager.toggle_value_aggregation(enabled=True)
-
-# Обновление конфигурации
-LoggerManager.update_aggregation_config({
-    "buffer_size": 200,
-    "flush_interval": 3.0,
-    "operation_aggregation": {
-        "cascade_window": 2.0,
-        "min_cascade_size": 5
-    }
-})
-
-# Получение статистики
-stats = LoggerManager.get_aggregation_stats()
-# {
-#     "total_stats": {
-#         "total_records": 1250,
-#         "aggregated_records": 89,
-#         "compression_ratio": 0.93,
-#         "operation_cascades_aggregated": 23,
-#         "tables_generated": 12,
-#         "errors_expanded": 3
-#     }
-# }
-```
-
----
-
-## Потоки обработки данных
-
-### Жизненный цикл лога
-
-**Полный поток агрегации логов**:
-1. **Инициация** - модуль приложения создает лог-запись
-2. **Буферизация** - BufferManager добавляет в буфер с timestamp
-3. **Паттерн детектирование** - PatternDetector анализирует схожие записи
-4. **Агрегация** - AggregationEngine группирует связанные паттерны
-5. **Табличное форматирование** - TabularFormatter создает ASCII таблицы
-6. **Расширение ошибок** - ErrorExpansionEngine анализирует ошибки с контекстом
-7. **Операционная агрегация** - OperationAggregator группирует каскады операций
-8. **Компрессия значений** - ValueAggregator сжимает повторяющиеся обновления
-9. **Маршрутизация вывода** - направление в консоль/файлы согласно конфигурации
-
-### Система безопасного получения сообщений
-
-**SafeMessageUtils** (`src/log_aggregator/safe_message_utils.py`) - обработка ошибок форматирования:
-
-**Безопасное извлечение сообщений**:
-```python
-def safe_get_message(record: logging.LogRecord) -> str:
-    """Безопасное получение сообщения с обработкой ошибок форматирования."""
-    try:
-        return record.getMessage()
-    except (TypeError, ValueError) as e:
-        # Обработка ошибок старого форматирования строк
-        msg = getattr(record, "msg", "Unknown message")
-        args = getattr(record, "args", ())
-        
-        if isinstance(msg, str) and "%" in msg and args:
-            safe_msg = msg.replace("%", "%%")  # Экранирование %
-            try:
-                return safe_msg % args
-            except:
-                return f"{msg} (args: {args})"
-        return str(msg)
-    except Exception:
-        return f"[Message formatting error: {type(e).__name__}: {e}]"
-```
-
-### Метрики производительности и статистика
-
-**Статистика агрегации**:
-- `total_records` - общее количество обработанных записей
-- `aggregated_records` - количество агрегированных записей  
-- `compression_ratio` - коэффициент сжатия логов (1 - aggregated/total)
-- `patterns_detected` - количество обнаруженных паттернов
-- `tables_generated` - количество созданных таблиц
-- `errors_expanded` - количество расширенных ошибок
-- `operation_cascades_aggregated` - количество агрегированных каскадов операций
-- `buffer_flushes` - количество сбросов буфера
-
-**Производительность системы**:
-- Thread-safe операции с минимальными блокировками
-- Асинхронная обработка через буферизацию
-- Настраиваемые временные окна для группировки
-- Адаптивные алгоритмы детектирования паттернов
-
----
-
-## Интеграция с основной системой
-
-### Инициализация на уровне модуля
-
-**Автоматическая конфигурация** (`src/core/logger_config.py:377-385`):
-```python
-# Инициализация при импорте модуля с включенной агрегацией
 LoggerManager.configure_logging(
     enable_aggregation=True,
-    aggregation_preset="performance",
-    enable_error_expansion=True,
-    enable_tabular_format=True,
-    enable_operation_aggregation=True,
-    enable_value_aggregation=True,
+    aggregation_config={"buffer_size": 50, "flush_interval": 3.0}
 )
 ```
 
-### Интеграция с существующим кодом
+---
 
-**Бесшовная интеграция** - без изменения существующего кода:
+## Core Component Architecture
+
+### Buffer Management System
+
+**BufferManager** (`src/log_aggregator/buffer_manager.py:30-170`) - **thread-safe log record buffering**:
+
+**Container Structure**:
+- `BufferedLogRecord` - Enhanced `LogRecord` with metadata and timestamps
+- `collections.deque` - Thread-safe circular buffer implementation
+- Automatic processing state tracking
+
+**Flushing Mechanisms**:
+- **Size-based**: Configurable `max_size` threshold (default: 100 records)
+- **Time-based**: Configurable `flush_interval` (default: 5.0 seconds)
+- **Manual flushing**: On-demand processing trigger
+- **Thread-safe operations**: `threading.Lock` for concurrent access
+
+**Key Features**:
 ```python
-# Существующий код остается неизменным
-logger = LoggerManager.get_logger(__name__)
-logger.info("Processing deconvolution for %s", filename)
-logger.debug("Adding reaction %d with function %s", reaction_id, function_type)
-
-# Система автоматически:
-# 1. Группирует схожие сообщения
-# 2. Создает таблицы для операций
-# 3. Расширяет ошибки с контекстом
-# 4. Агрегирует каскады операций
+class BufferManager:
+    def __init__(self, max_size: int = 100, flush_interval: float = 5.0)
+    def add_record(self, record: logging.LogRecord) -> None  # Thread-safe addition
+    def get_pending_records(self) -> List[BufferedLogRecord]  # Flush trigger
+    def should_flush(self) -> bool  # Automatic flushing logic
 ```
 
-### Система двух файлов логирования
+### Pattern Detection System
 
-**Файловая архитектура**:
-- **logs/solid_state_kinetics.log** - ВСЕ логи (сырые + агрегированные)
-- **logs/aggregated.log** - ТОЛЬКО агрегированные логи и таблицы
-- **Console output** - ТОЛЬКО агрегированные логи (дублирует aggregated.log)
+**PatternDetector** (`src/log_aggregator/pattern_detector.py:80-478`) - **intelligent similarity analysis**:
 
-**Маршрутизация логов**:
+**Pattern Types** (`src/log_aggregator/pattern_detector.py:18-25`):
+- `plot_lines_addition` - Graphics rendering operations
+- `cascade_component_initialization` - Component startup sequences  
+- `request_response_cycle` - Inter-component communication
+- `file_operations` - Data loading and file I/O
+- `gui_updates` - User interface modifications
+- `basic_similarity` - General similarity matching (fallback)
+
+**Detection Algorithms**:
+- **Difflib similarity**: Configurable threshold-based matching
+- **Template extraction**: Variable placeholder identification
+- **Temporal grouping**: Time-window based pattern clustering
+- **Message normalization**: Safe message extraction with error handling
+
+**Pattern Structures**:
 ```python
-# Исходные логи идут в main file
-raw_logger.info("Starting deconvolution...")        # → main file
-raw_logger.debug("Processing reaction 1...")        # → main file
+@dataclass
+class LogPattern:
+    pattern_id: str          # Unique pattern identifier
+    template: str           # Message template with placeholders
+    records: List[BufferedLogRecord]  # Matching log records
+    count: int             # Pattern occurrence frequency
+    pattern_type: str      # Classification type
+    first_seen: float     # Initial detection timestamp
+    last_seen: float      # Latest occurrence timestamp
+```
 
-# Агрегированные логи идут в оба файла + консоль
-aggregated_table = "📊 Plot Lines Addition..."      # → aggregated file + console
-operation_cascade = "🔄 OPERATION CASCADE..."       # → aggregated file + console
-error_expansion = "🚨 DETAILED ERROR ANALYSIS..."   # → aggregated file + console
+### Aggregation Processing Engine
+
+**AggregationEngine** (`src/log_aggregator/aggregation_engine.py:70-511`) - **pattern aggregation with monitoring**:
+
+**Core Aggregation Logic**:
+- **Minimum threshold enforcement**: Configurable `min_pattern_entries`
+- **Time span calculation**: Duration between first and last occurrences
+- **Sample message extraction**: Representative message selection
+- **Statistical summarization**: Count, frequency, and temporal metrics
+
+**Enhanced Monitoring Integration**:
+- **OptimizationMonitor**: Long-running calculation tracking
+- **PerformanceMonitor**: System resource and processing metrics
+- **OperationMonitor**: Request-response cycle analysis
+
+**Output Structure**:
+```python
+@dataclass
+class AggregatedLogRecord:
+    pattern_id: str
+    template: str
+    count: int
+    level: str
+    logger_name: str
+    first_timestamp: datetime
+    last_timestamp: datetime
+    sample_messages: List[str]
+    
+    def to_log_message(self) -> str  # Formatted output
+    def to_dict(self) -> Dict[str, Any]  # Structured data
 ```
 
 ---
 
-## Ключевые архитектурные преимущества
+## Advanced Analysis Components
 
-### Интеллектуальная агрегация
-1. **Снижение объема логов**: компрессия до 90%+ при сохранении критической информации
-2. **Структурированная визуализация**: таблицы вместо длинных списков
-3. **Контекстный анализ**: расширение ошибок с предшествующими операциями
-4. **Каскадное группирование**: объединение связанных операций в логические группы
+### Error Context Expansion Engine
 
-### Производительность и надежность
-1. **Thread-safe архитектура**: безопасная многопоточная обработка
-2. **Неблокирующая агрегация**: минимальное влияние на производительность приложения
-3. **Буферизованная обработка**: сглаживание пиков нагрузки
-4. **Отказоустойчивость**: graceful degradation при ошибках агрегации
+**ErrorExpansionEngine** (`src/log_aggregator/error_expansion.py:90-557`) - **comprehensive error analysis**:
 
-### Гибкость и расширяемость
-1. **Модульная архитектура**: независимые компоненты агрегации
-2. **Конфигурируемые пресеты**: готовые настройки для разных сценариев
-3. **Runtime управление**: динамическое переключение без перезапуска
-4. **Расширяемые паттерны**: легкое добавление новых типов агрегации
+**Error Classification System**:
+- **Automated pattern matching**: Keyword-based error categorization
+- **Context analysis**: Preceding and following log record examination
+- **Root cause investigation**: Operation trace analysis
+- **Actionable recommendations**: AI-generated resolution suggestions
 
-### Интеграция с рабочими процессами
-1. **Научный анализ**: специализированные таблицы для кинетических данных
-2. **Отладка приложения**: детальный контекст ошибок с трассировкой операций
-3. **Мониторинг производительности**: метрики каскадов операций и времени выполнения
-4. **Пользовательский интерфейс**: агрегированные логи для консольного вывода
+**Error Categories** (`src/log_aggregator/error_expansion.py:70-90`):
+- `file_not_found` - File system and path issues
+- `memory_error` - Resource allocation problems
+- `optimization_failure` - Scientific calculation failures
+- `gui_error` - User interface exceptions
+- `communication_error` - Inter-component failures
 
-Архитектура логирования обеспечивает полный жизненный цикл обработки логов от простых записей до структурированных аналитических сводок с высокой производительностью, надежностью и удобством использования для научных расчетов кинетики твердофазных реакций.
+**Context Structure**:
+```python
+@dataclass
+class ErrorContext:
+    error_record: BufferedLogRecord
+    preceding_records: List[BufferedLogRecord]
+    following_records: List[BufferedLogRecord]
+    related_operations: List[BufferedLogRecord]
+    error_trace: Optional[str]
+    suggested_actions: List[str]
+    error_classification: Optional[str]
+    context_keywords: List[str]
+```
+
+**Analysis Features**:
+- **Temporal context window**: Configurable time range for related record analysis
+- **Operation correlation**: Linking errors to specific operations
+- **Stack trace extraction**: Automatic traceback parsing
+- **Adaptive thresholds**: Load-based error expansion control
+
+### Tabular Output Formatting
+
+**TabularFormatter** (`src/log_aggregator/tabular_formatter.py:50-585`) - **structured ASCII table generation**:
+
+**Adaptive Table Generation**:
+- **Column width optimization**: Dynamic sizing based on content
+- **Pattern-specific formatting**: Specialized layouts for different pattern types
+- **Summary statistics**: Aggregated metrics and insights
+- **Unicode-safe rendering**: Proper handling of special characters
+
+**Table Types**:
+- **Pattern summaries**: Aggregated pattern occurrence tables
+- **Optimization progress**: Real-time calculation status tables
+- **Error analysis**: Structured error context presentation
+- **Performance metrics**: System resource utilization tables
+
+**Configuration Options**:
+```python
+@dataclass
+class TabularFormattingConfig:
+    enabled: bool = True
+    max_column_width: int = 50
+    show_timestamps: bool = True
+    show_loggers: bool = True
+    compact_mode: bool = False
+    table_borders: bool = True
+```
+
+---
+
+## Specialized Monitoring Systems
+
+### Optimization Process Monitoring
+
+**OptimizationMonitor** (`src/log_aggregator/optimization_monitor.py:50-467`) - **long-running calculation tracking**:
+
+**Process Status Tracking**:
+```python
+class OptimizationStatus(Enum):
+    STARTING = "starting"
+    RUNNING = "running"
+    CONVERGING = "converging"
+    STUCK = "stuck"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+```
+
+**Metrics Collection**:
+- **Iteration tracking**: Current vs. maximum iterations
+- **Convergence analysis**: Progress rate and stagnation detection
+- **Resource monitoring**: Memory usage and CPU utilization
+- **Time estimation**: Completion time prediction
+
+**Scientific Calculation Support**:
+- **Deconvolution monitoring**: Peak fitting optimization progress
+- **Model-based analysis**: Multi-reaction scheme optimization
+- **Series analysis**: Batch processing status
+- **Error propagation**: Optimization failure analysis
+
+### Performance Metrics System
+
+**PerformanceMonitor** (`src/log_aggregator/performance_monitor.py`) - **system resource tracking**:
+
+**Metrics Categories**:
+- **Processing latency**: Log processing time measurements
+- **Memory utilization**: Buffer and cache memory tracking
+- **Throughput analysis**: Records processed per second
+- **Resource bottlenecks**: System constraint identification
+
+**Adaptive Behavior**:
+- **Load-based throttling**: Automatic aggregation adjustment
+- **Memory pressure handling**: Buffer size optimization
+- **Performance alerting**: Threshold-based notifications
+
+### Operation Lifecycle Monitoring
+
+**OperationMonitor** (`src/log_aggregator/operation_monitor.py`) - **request-response cycle tracking**:
+
+**Operation Tracking**:
+- **Request correlation**: Matching requests to responses
+- **Latency measurement**: End-to-end operation timing
+- **Success rate monitoring**: Operation completion statistics
+- **Error correlation**: Linking failures to specific operations
+
+**Integration with Core Components**:
+- **BaseSignals integration**: Automatic operation detection
+- **Path-keys correlation**: Data operation tracking
+- **GUI interaction monitoring**: User action consequence tracking
+
+---
+
+## Configuration and Integration Architecture
+
+### Hierarchical Configuration System
+
+**AggregationConfig** (`src/log_aggregator/config.py:1-607`) - **comprehensive configuration management**:
+
+**Core Configuration Categories**:
+```python
+@dataclass
+class AggregationConfig:
+    # Buffer management
+    buffer_size: int = 100
+    flush_interval: float = 5.0
+    
+    # Pattern detection
+    pattern_similarity_threshold: float = 0.8
+    min_pattern_entries: int = 2
+    
+    # Error expansion
+    error_expansion_enabled: bool = True
+    error_threshold_level: str = "ERROR"
+    error_context_lines: int = 3
+    error_trace_depth: int = 10
+    
+    # Tabular formatting
+    tabular_formatting_enabled: bool = True
+    
+    # Performance tuning
+    enable_optimization_monitoring: bool = True
+    enable_performance_monitoring: bool = True
+    enable_operation_monitoring: bool = True
+```
+
+**Specialized Configurations**:
+- **ErrorExpansionConfig**: Error analysis parameters
+- **TabularFormattingConfig**: Table generation settings
+- **OptimizationMonitoringConfig**: Long-running process settings
+- **PerformanceMonitoringConfig**: System metrics parameters
+
+### Safe Message Processing
+
+**SafeMessageUtils** (`src/log_aggregator/safe_message_utils.py`) - **robust message handling**:
+
+**Error-resistant Processing**:
+- **Exception handling**: Graceful degradation for malformed records
+- **Message normalization**: Consistent formatting across components
+- **Encoding safety**: Unicode and special character handling
+- **Comparison utilities**: Safe string comparison for pattern matching
+
+---
+
+## Data Flow and Processing Pipeline
+
+### Real-time Processing Workflow
+
+**Stage 1: Log Record Ingestion**
+1. **Python logging event** → `AggregatingHandler.emit()`
+2. **Record validation** → Safe message extraction
+3. **Buffer addition** → `BufferManager.add_record()`
+4. **Threshold checking** → Time/size-based flush triggers
+
+**Stage 2: Pattern Detection**
+1. **Buffered records retrieval** → `BufferManager.get_pending_records()`
+2. **Similarity analysis** → `PatternDetector.detect_patterns()`
+3. **Template extraction** → Variable placeholder identification
+4. **Pattern classification** → Type-specific categorization
+
+**Stage 3: Aggregation Processing**
+1. **Pattern validation** → Minimum entry threshold enforcement
+2. **Statistical aggregation** → Count, timing, and sample generation
+3. **Monitoring integration** → Performance and optimization tracking
+4. **Record creation** → `AggregatedLogRecord` generation
+
+**Stage 4: Context Enhancement**
+1. **Error detection** → Log level and keyword analysis
+2. **Context expansion** → `ErrorExpansionEngine.expand_error()`
+3. **Recommendation generation** → Actionable suggestion creation
+4. **Correlation analysis** → Operation and temporal linking
+
+**Stage 5: Output Formatting**
+1. **Format selection** → Tabular vs. linear output decision
+2. **Table generation** → `TabularFormatter.format_pattern()`
+3. **Final output** → Target handler forwarding
+4. **Logging integration** → Standard logging system output
+
+### Monitoring Data Flows
+
+**Optimization Process Flow**:
+1. **Process detection** → Operation type identification
+2. **Metrics initialization** → `OptimizationMetrics` creation
+3. **Progress tracking** → Iteration and convergence monitoring
+4. **Status updates** → Real-time status broadcasting
+5. **Completion analysis** → Success/failure determination
+
+**Performance Monitoring Flow**:
+1. **Resource sampling** → CPU, memory, and I/O measurement
+2. **Latency tracking** → Processing time analysis
+3. **Throughput calculation** → Records per second metrics
+4. **Bottleneck detection** → System constraint identification
+5. **Adaptive adjustment** → Configuration optimization
+
+---
+
+## Integration with Core Application
+
+### LoggerManager Integration
+
+**Seamless Integration Points**:
+- **Optional activation**: Feature flag-based enabling
+- **Configuration inheritance**: LoggerManager settings propagation
+- **Handler chaining**: Existing logging infrastructure preservation
+- **Performance impact**: Minimal overhead when disabled
+
+**Configuration Integration**:
+```python
+# In LoggerManager.configure_logging()
+if enable_aggregation:
+    aggregating_handler = AggregatingHandler(
+        target_handler=existing_handler,
+        config=aggregation_config
+    )
+    logger.addHandler(aggregating_handler)
+```
+
+### Scientific Workflow Integration
+
+**Domain-specific Pattern Recognition**:
+- **Deconvolution operations**: Peak fitting progress tracking
+- **Model-based calculations**: Multi-reaction optimization monitoring
+- **Series analysis**: Batch processing status
+- **GUI interactions**: User workflow tracking
+
+**Kinetica Domain Integration**:
+- **Reaction parameter updates**: Path-keys based operation tracking
+- **Optimization convergence**: Scientific algorithm monitoring
+- **Data loading operations**: File I/O pattern recognition
+- **Error correlation**: Scientific calculation failure analysis
+
+---
+
+## Architectural Advantages
+
+### Scalability and Performance
+1. **Streaming processing**: Real-time log analysis without blocking
+2. **Memory efficiency**: Bounded buffer sizes with automatic flushing
+3. **Adaptive thresholds**: Load-based configuration adjustment
+4. **Parallel processing**: Thread-safe components for concurrent access
+
+### Maintainability and Extensibility
+1. **Modular design**: Independent component development and testing
+2. **Configuration-driven behavior**: Runtime customization without code changes
+3. **Pattern extensibility**: Easy addition of new pattern types
+4. **Monitoring expansion**: Pluggable monitoring component architecture
+
+### Scientific Computing Focus
+1. **Domain-aware patterns**: Scientific calculation-specific pattern recognition
+2. **Optimization monitoring**: Long-running process tracking
+3. **Error context analysis**: Comprehensive failure investigation
+4. **Performance optimization**: Resource-conscious design for compute-intensive applications
+
+### Development and Debugging Support
+1. **Comprehensive error expansion**: Detailed failure analysis with recommendations
+2. **Operation correlation**: Request-response lifecycle tracking
+3. **Performance insights**: System bottleneck identification
+4. **Structured output**: Machine-readable and human-friendly formats
+
+The log aggregation architecture provides a comprehensive, intelligent logging infrastructure specifically designed for scientific computing applications, offering real-time insights, performance monitoring, and detailed error analysis while maintaining minimal overhead and seamless integration with existing systems.
