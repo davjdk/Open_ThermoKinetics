@@ -12,6 +12,7 @@ from typing import List, Optional, Tuple, Union
 from .buffer_manager import BufferedLogRecord
 from .config import TabularFormattingConfig
 from .pattern_detector import LogPattern, PatternGroup
+from .safe_message_utils import safe_get_message
 
 
 @dataclass
@@ -118,7 +119,7 @@ class TabularFormatter:
         start_time = self._get_start_time_ms(pattern)
 
         for i, record in enumerate(pattern.records[: self.config.max_rows_per_table], 1):
-            line_name = self._extract_line_name(record.record.getMessage())
+            line_name = self._extract_line_name(safe_get_message(record.record))
             record_time_ms = record.timestamp.timestamp() * 1000
             relative_time = record_time_ms - start_time
             duration = relative_time if i > 1 else 0.0
@@ -155,7 +156,7 @@ class TabularFormatter:
         start_time = self._get_start_time_ms(pattern)
 
         for i, record in enumerate(pattern.records[: self.config.max_rows_per_table], 1):
-            component_name = self._extract_component_name(record.record.getMessage())
+            component_name = self._extract_component_name(safe_get_message(record.record))
             record_time_ms = record.timestamp.timestamp() * 1000
             relative_time = record_time_ms - start_time
 
@@ -190,7 +191,7 @@ class TabularFormatter:
         pairs = self._group_request_response_pairs(pattern.records)
 
         for i, (request, response) in enumerate(pairs[: self.config.max_rows_per_table], 1):
-            operation = self._extract_operation_type(request.record.getMessage())
+            operation = self._extract_operation_type(safe_get_message(request.record))
             time_str = request.timestamp.strftime("%H:%M:%S.%f")[:-3]
 
             if response:
@@ -220,15 +221,13 @@ class TabularFormatter:
         rows = []
 
         for i, record in enumerate(pattern.records[: self.config.max_rows_per_table], 1):
-            operation = self._extract_file_operation(record.record.getMessage())
-            file_name = self._extract_file_name(record.record.getMessage())
+            operation = self._extract_file_operation(safe_get_message(record.record))
+            file_name = self._extract_file_name(safe_get_message(record.record))
             time_str = record.timestamp.strftime("%H:%M:%S.%f")[:-3]
 
             row = [str(i), operation, file_name, time_str, "✅ Success"]
-            rows.append(row)
-
-        # Count operation types
-        operations = [self._extract_file_operation(r.record.getMessage()) for r in pattern.records]
+            rows.append(row)  # Count operation types
+        operations = [self._extract_file_operation(safe_get_message(r.record)) for r in pattern.records]
         operation_counts = {}
         for op in operations:
             operation_counts[op] = operation_counts.get(op, 0) + 1
@@ -252,8 +251,8 @@ class TabularFormatter:
         start_time = self._get_start_time_ms(pattern)
 
         for i, record in enumerate(pattern.records[: self.config.max_rows_per_table], 1):
-            component = self._extract_gui_component(record.record.getMessage())
-            update_type = self._extract_gui_update_type(record.record.getMessage())
+            component = self._extract_gui_component(safe_get_message(record.record))
+            update_type = self._extract_gui_update_type(safe_get_message(record.record))
             record_time_ms = record.timestamp.timestamp() * 1000
             relative_time = record_time_ms - start_time
 
@@ -285,7 +284,7 @@ class TabularFormatter:
         rows = []
         for i, record in enumerate(pattern.records[: self.config.max_rows_per_table], 1):
             time_str = record.timestamp.strftime("%H:%M:%S.%f")[:-3]
-            message = record.record.getMessage()
+            message = safe_get_message(record.record)
             if len(message) > 50:
                 message = message[:50] + "..."
 
@@ -400,11 +399,11 @@ class TabularFormatter:
         request = None
 
         for record in records:
-            if "request" in record.record.getMessage().lower():
+            if "request" in safe_get_message(record.record).lower():
                 if request:  # Previous request without response
                     pairs.append((request, None))
                 request = record
-            elif "response" in record.record.getMessage().lower() and request:
+            elif "response" in safe_get_message(record.record).lower() and request:
                 pairs.append((request, record))
                 request = None
 

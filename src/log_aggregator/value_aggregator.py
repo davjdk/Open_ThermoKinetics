@@ -32,6 +32,7 @@ except ImportError:
     from core.logger_config import LoggerManager
 
 from .buffer_manager import BufferedLogRecord
+from .safe_message_utils import safe_get_message
 
 
 @dataclass
@@ -120,8 +121,7 @@ class ValueAggregator:
         self._logger = LoggerManager.get_logger("log_aggregator.value_aggregator")
 
     def process_message(self, record: BufferedLogRecord) -> str:
-        """
-        Process log message and compress large values.
+        """Process log message and compress large values.
 
         Args:
             record: Log record to process
@@ -130,7 +130,7 @@ class ValueAggregator:
             Processed message with compressed values
         """
         with self._lock:
-            message = record.record.getMessage()
+            message = safe_get_message(record.record)
             original_message = message
 
             # Process different types of values

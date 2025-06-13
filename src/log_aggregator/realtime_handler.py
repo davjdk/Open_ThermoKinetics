@@ -21,6 +21,7 @@ from .config import AggregationConfig, TabularFormattingConfig
 from .error_expansion import ErrorExpansionConfig, ErrorExpansionEngine
 from .operation_aggregator import OperationAggregationConfig, OperationAggregator
 from .pattern_detector import PatternDetector
+from .safe_message_utils import safe_get_message
 from .tabular_formatter import TabularFormatter
 from .value_aggregator import ValueAggregationConfig, ValueAggregator
 
@@ -187,7 +188,7 @@ class AggregatingHandler(logging.Handler):
             # Update statistics
             self._errors_expanded += 1
 
-            self._logger.debug(f"Expanded error: {error_record.record.getMessage()[:100]}")
+            self._logger.debug(f"Expanded error: {safe_get_message(error_record.record)[:100]}")
 
         except Exception as e:
             self._logger.error(f"Error in immediate error expansion: {e}")
@@ -258,7 +259,7 @@ class AggregatingHandler(logging.Handler):
                     level=aggregated_record.record.levelno,
                     pathname="",
                     lineno=0,
-                    msg=aggregated_record.record.getMessage(),
+                    msg=safe_get_message(aggregated_record.record),
                     args=(),
                     exc_info=None,
                 )

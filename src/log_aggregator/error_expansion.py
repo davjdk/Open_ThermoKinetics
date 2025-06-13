@@ -13,6 +13,7 @@ from datetime import timedelta
 from typing import Dict, List, Optional
 
 from .buffer_manager import BufferedLogRecord
+from .safe_message_utils import safe_get_message
 
 
 @dataclass
@@ -204,10 +205,8 @@ class ErrorExpansionEngine:
         Returns:
             ErrorContext with analyzed information
         """
-        context = ErrorContext(error_record=error_record)
-
-        # Extract error information
-        error_message = error_record.record.getMessage().lower()
+        context = ErrorContext(error_record=error_record)  # Extract error information
+        error_message = safe_get_message(error_record.record).lower()
         context.context_keywords = self._extract_keywords(error_message)
 
         # Classify error type
@@ -341,24 +340,21 @@ class ErrorExpansionEngine:
             context_records: Available context records
 
         Returns:
-            List of related operation records
-        """
-        error_message = error_record.record.getMessage().lower()
+            List of related operation records"""
+        error_message = safe_get_message(error_record.record).lower()
         error_keywords = self._extract_keywords(error_message)
 
         related = []
         for record in context_records:
-            record_message = record.record.getMessage().lower()
+            record_message = safe_get_message(record.record).lower()
             record_keywords = self._extract_keywords(record_message)
 
             # Check for common keywords
             common_keywords = set(error_keywords) & set(record_keywords)
             if common_keywords:
-                related.append(record)
-
-        # Sort by relevance (number of common keywords)
+                related.append(record)  # Sort by relevance (number of common keywords)
         related.sort(
-            key=lambda x: len(set(self._extract_keywords(x.record.getMessage().lower())) & set(error_keywords)),
+            key=lambda x: len(set(self._extract_keywords(safe_get_message(x.record).lower())) & set(error_keywords)),
             reverse=True,
         )
         return related[: self.config.trace_depth]
@@ -378,7 +374,7 @@ class ErrorExpansionEngine:
             return "".join(traceback.format_exception(*error_record.record.exc_info))
 
         # Look for trace patterns in the message
-        message = error_record.record.getMessage()
+        message = safe_get_message(error_record.record)
 
         # Extract file and line number information
         trace_pattern = r"(\w+\.py):(\d+)"
@@ -443,7 +439,7 @@ class ErrorExpansionEngine:
         # Basic error information
         lines.append(f"📍 Location: {context.error_record.record.filename}:{context.error_record.record.lineno}")
         lines.append(f"⏰ Time: {context.error_record.timestamp.strftime('%Y-%m-%d %H:%M:%S')}")
-        lines.append(f"💬 Message: {context.error_record.record.getMessage()}")
+        lines.append(f"💬 Message: {safe_get_message(context.error_record.record)}")
         lines.append("")
 
         # Error classification
@@ -457,7 +453,8 @@ class ErrorExpansionEngine:
             lines.append("-" * 40)
             for i, record in enumerate(context.preceding_records[-5:], 1):
                 time_ago = (context.error_record.timestamp - record.timestamp).total_seconds()
-                lines.append(f"  {i}. [{record.record.levelname}] {record.record.getMessage()} ({time_ago:.1f}s ago)")
+                message = safe_get_message(record.record)
+                lines.append(f"  {i}. [{record.record.levelname}] {message} ({time_ago:.1f}s ago)")
             lines.append("")
 
         # Related operations
@@ -466,8 +463,8 @@ class ErrorExpansionEngine:
             lines.append("-" * 40)
             for i, record in enumerate(context.related_operations[:3], 1):
                 lines.append(
-                    f"  {i}. [{record.record.levelname}] {record.record.filename}:\
-                        {record.record.lineno} - {record.record.getMessage()}"
+                    f"  {i}. [{record.record.levelname}] {record.record.filename}:"
+                    f"{record.record.lineno} - {safe_get_message(record.record)}"
                 )
             lines.append("")
 
@@ -519,7 +516,7 @@ class ErrorExpansionEngine:
 
         # Add custom attributes for context
         new_record.error_expansion = True
-        new_record.original_message = original_record.record.getMessage()
+        new_record.original_message = safe_get_message(original_record.record)
         new_record.error_classification = context.error_classification
         new_record.suggestion_count = len(context.suggested_actions)
         new_record.context_records_count = len(context.preceding_records)

@@ -11,6 +11,7 @@ from typing import Any, Dict, List
 
 from .buffer_manager import BufferedLogRecord
 from .pattern_detector import LogPattern, PatternGroup
+from .safe_message_utils import safe_get_message
 
 
 @dataclass
@@ -125,8 +126,9 @@ class AggregationEngine:
 
         # Extract sample messages (up to 3)
         sample_messages = []
+
         for record in pattern.records[:3]:
-            message = record.record.getMessage()
+            message = safe_get_message(record.record)
             if message not in sample_messages:
                 sample_messages.append(message)
 
@@ -212,8 +214,9 @@ class AggregationEngine:
 
         # Extract sample messages (up to 3)
         sample_messages = []
+
         for record in pattern_group.records[:3]:
-            message = record.record.getMessage()
+            message = safe_get_message(record.record)
             if message not in sample_messages:
                 sample_messages.append(message)
 
@@ -261,7 +264,7 @@ class AggregationEngine:
         else:
             # Fallback for basic similarity patterns
             if pattern_group.records:
-                return pattern_group.records[0].record.getMessage()
+                return safe_get_message(pattern_group.records[0].record)
             return "Unknown pattern"
 
     def get_pattern_type_statistics(self, pattern_groups: List[PatternGroup]) -> Dict[str, Any]:

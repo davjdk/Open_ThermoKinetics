@@ -12,6 +12,7 @@ from datetime import datetime, timedelta
 from typing import Any, Dict, List
 
 from .buffer_manager import BufferedLogRecord
+from .safe_message_utils import safe_get_message, safe_get_message_for_comparison
 
 # Enhanced pattern types for Stage 2
 PATTERN_TYPES = {
@@ -174,14 +175,14 @@ class PatternDetector:
 
         while unprocessed:
             current_record = unprocessed.pop(0)
-            current_message = current_record.record.getMessage()
+            current_message = safe_get_message_for_comparison(current_record.record)
 
             # Find similar messages
             similar_records = [current_record]
             remaining = []
 
             for other_record in unprocessed:
-                other_message = other_record.record.getMessage()
+                other_message = safe_get_message_for_comparison(other_record.record)
                 similarity = self._calculate_similarity(current_message, other_message)
 
                 if similarity >= self.similarity_threshold:
@@ -215,7 +216,7 @@ class PatternDetector:
         pattern_type = self._get_enhanced_pattern_key(records[0])
 
         # Create template from the first message (simple approach for Stage 1)
-        template = records[0].record.getMessage()
+        template = safe_get_message(records[0].record)
 
         # Find common parts and create a simple template
         if len(records) > 1:
@@ -236,7 +237,7 @@ class PatternDetector:
 
     def _create_template(self, records: List[BufferedLogRecord]) -> str:
         """Create a template message from similar records."""
-        messages = [record.record.getMessage() for record in records]
+        messages = [safe_get_message(record.record) for record in records]
 
         if not messages:
             return ""
@@ -314,7 +315,7 @@ class PatternDetector:
 
     def _get_enhanced_pattern_key(self, record: BufferedLogRecord) -> str:
         """Determine the enhanced pattern type for a record."""
-        message = record.record.getMessage()
+        message = safe_get_message(record.record)
         message_lower = message.lower()
 
         # Check for plot lines addition pattern
@@ -389,7 +390,7 @@ class PatternDetector:
         line_names = []
 
         for record in records:
-            message = record.record.getMessage()
+            message = safe_get_message(record.record)
             # Extract line name from message like "Adding a new line 'F1/3' to the plot."
             match = re.search(r"Adding a new line '([^']+)' to the plot", message)
             if match:
@@ -405,7 +406,7 @@ class PatternDetector:
         components = []
 
         for record in records:
-            message = record.record.getMessage()
+            message = safe_get_message(record.record)
             # Extract component name from message like "Initializing UserGuideTab"
             match = re.search(r"Initializing (\w+)", message)
             if match:
@@ -423,7 +424,7 @@ class PatternDetector:
         response_count = 0
 
         for record in records:
-            message = record.record.getMessage().lower()
+            message = safe_get_message(record.record).lower()
             if "request" in message:
                 request_count += 1
             elif "response" in message:
@@ -441,7 +442,7 @@ class PatternDetector:
         file_extensions = set()
 
         for record in records:
-            message = record.record.getMessage().lower()
+            message = safe_get_message(record.record).lower()
 
             # Detect operation type
             if "loading" in message or "reading" in message:
@@ -464,7 +465,7 @@ class PatternDetector:
         update_types = set()
 
         for record in records:
-            message = record.record.getMessage().lower()
+            message = safe_get_message(record.record).lower()
 
             if "updating" in message:
                 update_types.add("update")
