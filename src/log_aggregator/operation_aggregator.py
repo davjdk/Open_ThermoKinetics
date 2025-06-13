@@ -19,6 +19,7 @@ except ImportError:
     from core.logger_config import LoggerManager
 
 from .buffer_manager import BufferedLogRecord
+from .safe_message_utils import safe_get_message
 
 
 @dataclass
@@ -175,7 +176,7 @@ class OperationAggregator:
 
     def _extract_operation(self, record: BufferedLogRecord) -> Optional[str]:
         """Extract operation name from log record."""
-        message = record.record.getMessage()
+        message = safe_get_message(record.record)
 
         for pattern in self.operation_patterns:
             match = pattern.search(message)

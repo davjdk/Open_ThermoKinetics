@@ -18,6 +18,7 @@ class LoggerManager:
         console_level: Optional[int] = None,
         file_level: Optional[int] = None,
         log_file: Optional[str] = None,
+        aggregated_log_file: Optional[str] = None,
         max_file_size: int = 10 * 1024 * 1024,  # 10MB
         backup_count: int = 5,
         enable_aggregation: bool = False,
@@ -35,7 +36,8 @@ class LoggerManager:
             log_level: Default logging level for all handlers
             console_level: Specific level for console output (defaults to log_level)
             file_level: Specific level for file output (defaults to DEBUG)
-            log_file: Path to log file (defaults to logs/solid_state_kinetics.log)
+            log_file: Path to main log file (defaults to logs/solid_state_kinetics.log)
+            aggregated_log_file: Path to aggregated log file (defaults to logs/aggregated.log)
             max_file_size: Maximum size of log file before rotation
             backup_count: Number of backup files to keep
             enable_aggregation: Whether to enable log aggregation
@@ -63,15 +65,12 @@ class LoggerManager:
 
         console_formatter = logging.Formatter(
             "%(asctime)s - %(levelname)s - %(filename)s:%(lineno)d - %(message)s", datefmt="%H:%M:%S"
-        )
-
-        # Console handler
+        )  # Console handler
         console_handler = logging.StreamHandler()
         console_handler.setLevel(console_level)
         console_handler.setFormatter(console_formatter)
-        root_logger.addHandler(console_handler)
 
-        # File handler with rotation
+        # File handler with rotation (main file - gets ALL logs)
         if log_file is None:
             logs_dir = Path("logs")
             logs_dir.mkdir(exist_ok=True)
@@ -82,7 +81,21 @@ class LoggerManager:
         )
         file_handler.setLevel(file_level)
         file_handler.setFormatter(detailed_formatter)
-        root_logger.addHandler(file_handler)  # Log aggregation handler
+        root_logger.addHandler(file_handler)
+
+        # Aggregated file handler (only aggregated logs)
+        if aggregated_log_file is None:
+            logs_dir = Path("logs")
+            logs_dir.mkdir(exist_ok=True)
+            aggregated_log_file = logs_dir / "aggregated.log"
+
+        aggregated_file_handler = logging.handlers.RotatingFileHandler(
+            aggregated_log_file, maxBytes=max_file_size, backupCount=backup_count, encoding="utf-8"
+        )
+        aggregated_file_handler.setLevel(file_level)
+        aggregated_file_handler.setFormatter(detailed_formatter)
+
+        # Log aggregation handler
         if enable_aggregation:
             try:
                 from src.log_aggregator import AggregatingHandler, AggregationConfig
@@ -95,9 +108,7 @@ class LoggerManager:
                 elif aggregation_preset == "detailed":
                     agg_config = AggregationConfig.create_detailed()
                 else:
-                    agg_config = AggregationConfig()
-
-                # Override with specific parameters
+                    agg_config = AggregationConfig()  # Override with specific parameters
                 if aggregation_config:
                     # Update config with provided values
                     for key, value in aggregation_config.items():
@@ -114,8 +125,8 @@ class LoggerManager:
                 if agg_config.value_aggregation:
                     agg_config.value_aggregation.enabled = enable_value_aggregation
 
-                # Create aggregating handler that wraps the console handler
-                aggregating_handler = AggregatingHandler(
+                # Create aggregating handlers for both console and aggregated file
+                console_aggregating_handler = AggregatingHandler(
                     target_handler=console_handler,
                     config=agg_config,
                     enable_error_expansion=enable_error_expansion,
@@ -123,15 +134,28 @@ class LoggerManager:
                     enable_operation_aggregation=enable_operation_aggregation,
                     enable_value_aggregation=enable_value_aggregation,
                 )
-                aggregating_handler.setLevel(console_level)
-                aggregating_handler.setFormatter(console_formatter)
+                console_aggregating_handler.setLevel(console_level)
+                console_aggregating_handler.setFormatter(console_formatter)
 
-                # Replace console handler with aggregating handler
-                root_logger.removeHandler(console_handler)
-                root_logger.addHandler(aggregating_handler)
+                aggregated_file_aggregating_handler = AggregatingHandler(
+                    target_handler=aggregated_file_handler,
+                    config=agg_config,
+                    enable_error_expansion=enable_error_expansion,
+                    enable_tabular_formatting=enable_tabular_format,
+                    enable_operation_aggregation=enable_operation_aggregation,
+                    enable_value_aggregation=enable_value_aggregation,
+                )
+                aggregated_file_aggregating_handler.setLevel(file_level)
+                aggregated_file_aggregating_handler.setFormatter(detailed_formatter)
 
-                # Store reference for runtime management
-                cls._aggregating_handlers.append(aggregating_handler)
+                # Add console aggregating handler (console shows only aggregated logs)
+                root_logger.addHandler(console_aggregating_handler)
+                # Add aggregated file aggregating handler (aggregated file shows only aggregated logs)
+                root_logger.addHandler(aggregated_file_aggregating_handler)
+
+                # Store references for runtime management
+                cls._aggregating_handlers.append(console_aggregating_handler)
+                cls._aggregating_handlers.append(aggregated_file_aggregating_handler)
 
                 root_logger.info(f"Log aggregation enabled with preset: {aggregation_preset}")
                 root_logger.info(f"Error expansion: {enable_error_expansion}")
@@ -140,9 +164,11 @@ class LoggerManager:
                 root_logger.info(f"Value aggregation: {enable_value_aggregation}")
             except Exception as e:
                 root_logger.error(f"Failed to configure log aggregation: {e}")
-                # Fallback: keep original console handler
-                if console_handler not in root_logger.handlers:
-                    root_logger.addHandler(console_handler)
+                # Fallback: add non-aggregating console handler
+                root_logger.addHandler(console_handler)
+        else:
+            # If aggregation is disabled, add console handler directly
+            root_logger.addHandler(console_handler)
 
         # Log the configuration
         root_logger.info("Logging configured successfully")
@@ -150,7 +176,12 @@ class LoggerManager:
         root_logger.info(f"Console level: {console_level_name}")
         file_level_name = logging.getLevelName(file_level)
         root_logger.info(f"File level: {file_level_name}")
-        root_logger.info(f"Log file: {log_file}")
+        root_logger.info(f"Main log file: {log_file}")
+        if enable_aggregation:
+            root_logger.info(f"Aggregated log file: {aggregated_log_file}")
+            root_logger.info("Console output: aggregated logs only")
+            root_logger.info("Main file: all logs (raw + aggregated)")
+            root_logger.info("Aggregated file: aggregated logs only")
 
         cls._configured = True
 
@@ -344,8 +375,15 @@ def configure_logger(log_level: int = logging.INFO) -> logging.Logger:
     return LoggerManager.get_logger(module_name)
 
 
-# Initialize logging on module import
-LoggerManager.configure_logging()
+# Initialize logging on module import with aggregation enabled
+LoggerManager.configure_logging(
+    enable_aggregation=True,
+    aggregation_preset="performance",
+    enable_error_expansion=True,
+    enable_tabular_format=True,
+    enable_operation_aggregation=True,
+    enable_value_aggregation=True,
+)
 
 
 # Provide default logger instance for backward compatibility

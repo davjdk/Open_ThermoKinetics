@@ -7,11 +7,11 @@ into structured ASCII tables with adaptive formatting for improved readability.
 
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Union
 
 from .buffer_manager import BufferedLogRecord
 from .config import TabularFormattingConfig
-from .pattern_detector import PatternGroup
+from .pattern_detector import LogPattern, PatternGroup
 
 
 @dataclass
@@ -60,7 +60,7 @@ class TabularFormatter:
             "gui_updates": self._create_gui_updates_table,
         }
 
-    def format_patterns_as_tables(self, patterns: List[PatternGroup]) -> List[BufferedLogRecord]:
+    def format_patterns_as_tables(self, patterns: List[Union[PatternGroup, LogPattern]]) -> List[BufferedLogRecord]:
         """
         Format aggregated patterns as ASCII tables.
 
@@ -94,9 +94,9 @@ class TabularFormatter:
 
         return table_records
 
-    def _should_format_pattern(self, pattern: PatternGroup) -> bool:
+    def _should_format_pattern(self, pattern: Union[PatternGroup, LogPattern]) -> bool:
         """Check if pattern should be formatted as table."""
-        if not pattern.get_table_suitable_flag():
+        if hasattr(pattern, "get_table_suitable_flag") and not pattern.get_table_suitable_flag():
             return False
 
         return (
@@ -105,17 +105,17 @@ class TabularFormatter:
             and len(pattern.records) <= self.config.max_rows_per_table
         )
 
-    def _create_table_for_pattern(self, pattern: PatternGroup) -> Optional[TableData]:
+    def _create_table_for_pattern(self, pattern: Union[PatternGroup, LogPattern]) -> Optional[TableData]:
         """Create table data for a specific pattern type."""
         formatter = self._formatters.get(pattern.pattern_type, self._create_generic_table)
         return formatter(pattern)
 
-    def _create_plot_lines_table(self, pattern: PatternGroup) -> TableData:
+    def _create_plot_lines_table(self, pattern: Union[PatternGroup, LogPattern]) -> TableData:
         """Create table for plot lines addition pattern."""
         headers = ["#", "Line Name", "Time", "Duration (ms)", "Status"]
         rows = []
 
-        start_time = pattern.start_time.timestamp() * 1000  # Convert to ms
+        start_time = self._get_start_time_ms(pattern)
 
         for i, record in enumerate(pattern.records[: self.config.max_rows_per_table], 1):
             line_name = self._extract_line_name(record.record.getMessage())
@@ -126,7 +126,8 @@ class TabularFormatter:
             row = [str(i), line_name, f"+{relative_time:.1f}ms", f"{duration:.1f}", "✅ Success"]
             rows.append(row)
 
-        total_duration = (pattern.end_time.timestamp() - pattern.start_time.timestamp()) * 1000
+        end_time = self._get_end_time_ms(pattern)
+        total_duration = end_time - start_time
         avg_duration = total_duration / len(pattern.records) if pattern.records else 0
 
         summary = (
@@ -146,12 +147,12 @@ class TabularFormatter:
         """Enable or disable tabular formatting."""
         self.config.enabled = enabled
 
-    def _create_initialization_table(self, pattern: PatternGroup) -> TableData:
+    def _create_initialization_table(self, pattern: Union[PatternGroup, LogPattern]) -> TableData:
         """Create table for component initialization cascade pattern."""
         headers = ["Step", "Component", "Time", "Duration (ms)", "Status"]
         rows = []
 
-        start_time = pattern.start_time.timestamp() * 1000
+        start_time = self._get_start_time_ms(pattern)
 
         for i, record in enumerate(pattern.records[: self.config.max_rows_per_table], 1):
             component_name = self._extract_component_name(record.record.getMessage())
@@ -168,7 +169,8 @@ class TabularFormatter:
             row = [str(i), component_name, f"+{relative_time:.1f}ms", f"{duration:.1f}", "✅ OK"]
             rows.append(row)
 
-        total_duration = (pattern.end_time.timestamp() - pattern.start_time.timestamp()) * 1000
+        end_time = self._get_end_time_ms(pattern)
+        total_duration = end_time - start_time
         summary = f"📊 Initialization cascade: {len(pattern.records)} components in {total_duration:.1f}ms"
 
         return TableData(
@@ -242,12 +244,12 @@ class TabularFormatter:
             table_type="file_operations",
         )
 
-    def _create_gui_updates_table(self, pattern: PatternGroup) -> TableData:
+    def _create_gui_updates_table(self, pattern: Union[PatternGroup, LogPattern]) -> TableData:
         """Create table for GUI updates pattern."""
         headers = ["#", "Component", "Update Type", "Time", "Duration (ms)"]
         rows = []
 
-        start_time = pattern.start_time.timestamp() * 1000
+        start_time = self._get_start_time_ms(pattern)
 
         for i, record in enumerate(pattern.records[: self.config.max_rows_per_table], 1):
             component = self._extract_gui_component(record.record.getMessage())
@@ -265,7 +267,8 @@ class TabularFormatter:
             row = [str(i), component, update_type, f"+{relative_time:.1f}ms", f"{duration:.1f}"]
             rows.append(row)
 
-        total_duration = (pattern.end_time.timestamp() - pattern.start_time.timestamp()) * 1000
+        end_time = self._get_end_time_ms(pattern)
+        total_duration = end_time - start_time
         summary = f"📊 GUI updates: {len(pattern.records)} operations in {total_duration:.1f}ms"
 
         return TableData(
@@ -276,7 +279,7 @@ class TabularFormatter:
             table_type="gui_updates",
         )
 
-    def _create_generic_table(self, pattern: PatternGroup) -> TableData:
+    def _create_generic_table(self, pattern: Union[PatternGroup, LogPattern]) -> TableData:
         """Create generic table for unspecified pattern types."""
         headers = ["#", "Message", "Time", "Logger"]
         rows = []
@@ -562,3 +565,21 @@ class TabularFormatter:
         )
 
         return BufferedLogRecord(record=log_record, timestamp=datetime.now())
+
+    def _get_start_time_ms(self, pattern: Union[PatternGroup, LogPattern]) -> float:
+        """Get start time in milliseconds for both LogPattern and PatternGroup."""
+        if hasattr(pattern, "start_time"):
+            # PatternGroup
+            return pattern.start_time.timestamp() * 1000
+        else:
+            # LogPattern
+            return pattern.first_seen * 1000
+
+    def _get_end_time_ms(self, pattern: Union[PatternGroup, LogPattern]) -> float:
+        """Get end time in milliseconds for both LogPattern and PatternGroup."""
+        if hasattr(pattern, "end_time"):
+            # PatternGroup
+            return pattern.end_time.timestamp() * 1000
+        else:
+            # LogPattern
+            return pattern.last_seen * 1000
