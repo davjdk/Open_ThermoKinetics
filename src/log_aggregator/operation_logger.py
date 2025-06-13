@@ -13,6 +13,13 @@ from datetime import datetime
 from functools import wraps
 from typing import Any, Dict, List, Optional
 
+# Import OperationAggregator for integration
+try:
+    from .operation_aggregator import OperationAggregator
+except ImportError:
+    # Handle case where aggregator is not available
+    OperationAggregator = None
+
 
 @dataclass
 class OperationContext:
@@ -42,14 +49,16 @@ class OperationLogger:
     custom metrics within operations.
     """
 
-    def __init__(self, logger_name: str = "solid_state_kinetics.operations"):
+    def __init__(self, logger_name: str = "solid_state_kinetics.operations", aggregator=None):
         """
         Initialize the operation logger.
 
         Args:
             logger_name: Name of the logger to use for operation logging
+            aggregator: Optional OperationAggregator for integration
         """
         self.logger = logging.getLogger(logger_name)
+        self.aggregator = aggregator
         self._local = threading.local()
 
     @property
@@ -89,6 +98,10 @@ class OperationLogger:
         # Log operation start
         self._log_operation_start(context)
 
+        # Integrate with aggregator if available
+        if self.aggregator and not parent_id:  # Only start aggregation for root operations
+            self.aggregator.start_operation(operation_name)
+
         return operation_id
 
     def end_operation(self, operation_id: Optional[str] = None, status: str = "SUCCESS") -> None:
@@ -114,6 +127,10 @@ class OperationLogger:
 
         # Log operation end
         self._log_operation_end(context)
+
+        # Integrate with aggregator if available
+        if self.aggregator and not context.parent_operation_id:  # Only end aggregation for root operations
+            self.aggregator.end_operation()
 
     def add_metric(self, key: str, value: Any) -> None:
         """

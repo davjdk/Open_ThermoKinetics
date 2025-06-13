@@ -56,6 +56,43 @@ class OperationGroup:
     records: List[BufferedLogRecord] = field(default_factory=list)
     """All log records in the cascade for error context"""
 
+    # New fields for explicit mode support
+    operation_name: str = None
+    """Explicit name of the operation (for explicit mode)"""
+
+    explicit_mode: bool = False
+    """Flag indicating if this group was created in explicit mode"""
+
+    request_count: int = 0
+    """Number of requests in the operation"""
+
+    custom_metrics: Dict[str, any] = field(default_factory=dict)
+    """Custom metrics collected during operation"""
+
+    sub_operations: List[str] = field(default_factory=list)
+    """List of detected sub-operations"""
+
+    def add_record(self, record: BufferedLogRecord) -> None:
+        """Add a log record to this operation group."""
+        self.records.append(record)
+        self.operation_count += 1
+        self.end_time = record.timestamp
+
+        # Extract actor from record
+        if hasattr(record.record, "pathname"):
+            import re
+
+            actor_pattern = re.compile(r"(\w+)\.py:\d+")
+            match = actor_pattern.search(record.record.pathname)
+            if match:
+                self.actors.add(match.group(1))
+
+        # Update error/warning status
+        if record.record.levelno >= logging.ERROR:
+            self.has_errors = True
+        if record.record.levelno >= logging.WARNING:
+            self.has_warnings = True
+
 
 @dataclass
 class OperationAggregationConfig:
@@ -88,6 +125,22 @@ class OperationAggregationConfig:
         }
     )
     """Set of operations that can start a cascade"""
+
+    # New configuration options for explicit mode
+    explicit_mode_enabled: bool = True
+    """Enable explicit mode support"""
+
+    auto_mode_enabled: bool = True
+    """Enable automatic mode support"""
+
+    operation_timeout: float = 30.0
+    """Timeout for explicit operations in seconds"""
+
+    detect_sub_operations: bool = True
+    """Automatically detect sub-operations"""
+
+    merge_nested_operations: bool = True
+    """Merge nested operations into parent operation"""
 
 
 class OperationAggregator:
@@ -145,34 +198,52 @@ class OperationAggregator:
         with self._lock:
             self.stats["total_operations_processed"] += 1
 
-            # Extract operation name and actor from record
-            operation = self._extract_operation(record)
-            actor = self._extract_actor(record)
+            # If in explicit mode, all records go to current group
+            if self.is_explicit_mode():
+                self.current_group.add_record(record)
+                # Detect sub-operations
+                if self.config.detect_sub_operations:
+                    sub_op = self._detect_sub_operations(record)
+                    if sub_op and sub_op not in self.current_group.sub_operations:
+                        self.current_group.sub_operations.append(sub_op)
+                        # Count handle_request_cycle calls
+                        if "handle_request_cycle" in safe_get_message(record.record):
+                            self.current_group.request_count += 1
+                return None
 
-            if not operation:
-                # Not an operation record, check if we should close current group
-                if self.current_group and self._is_cascade_expired(record.timestamp):
-                    return self._close_current_group()
-                return None  # Check if this is a root operation (starts new cascade)
-            if operation in self.config.root_operations:
-                # Close previous group if exists
-                completed_group = None
-                if self.current_group:
-                    completed_group = self._close_current_group()
+            # Otherwise use existing automatic mode logic
+            return self._process_automatic_mode(record)
 
-                # Start new group
-                self._start_new_group(operation, record, actor)
-                return completed_group
+    def _process_automatic_mode(self, record: BufferedLogRecord) -> Optional[OperationGroup]:
+        """Process record using automatic mode logic."""
+        # Extract operation name and actor from record
+        operation = self._extract_operation(record)
+        actor = self._extract_actor(record)
 
-            # Add to current group if exists and within time window
-            if self.current_group and not self._is_cascade_expired(record.timestamp):
-                self._add_to_current_group(operation, record, actor)
-            elif self.current_group and self._is_cascade_expired(record.timestamp):
-                # Close expired group and start new one if this is a root operation
+        if not operation:
+            # Not an operation record, check if we should close current group
+            if self.current_group and self._is_cascade_expired(record.timestamp):
+                return self._close_current_group()
+            return None  # Check if this is a root operation (starts new cascade)
+        if operation in self.config.root_operations:
+            # Close previous group if exists
+            completed_group = None
+            if self.current_group:
                 completed_group = self._close_current_group()
-                return completed_group
 
-            return None
+            # Start new group
+            self._start_new_group(operation, record, actor)
+            return completed_group
+
+        # Add to current group if exists and within time window
+        if self.current_group and not self._is_cascade_expired(record.timestamp):
+            self._add_to_current_group(operation, record, actor)
+        elif self.current_group and self._is_cascade_expired(record.timestamp):
+            # Close expired group and start new one if this is a root operation
+            completed_group = self._close_current_group()
+            return completed_group
+
+        return None
 
     def _extract_operation(self, record: BufferedLogRecord) -> Optional[str]:
         """Extract operation name from log record."""
@@ -265,6 +336,128 @@ class OperationAggregator:
             self.stats["compression_ratio"] = (
                 self.stats["operations_aggregated"] / self.stats["total_operations_processed"]
             )
+
+    # New methods for explicit mode support
+    def start_operation(self, name: str) -> None:
+        """
+        Start a new group of operations in explicit mode.
+
+        Args:
+            name: Name of the operation to start
+        """
+        with self._lock:
+            # Close current group if open
+            if self.current_group:
+                self._close_current_group()
+
+            # Create new group in explicit mode
+            import time
+
+            self.current_group = OperationGroup(
+                root_operation=name,
+                operation_name=name,
+                start_time=datetime.fromtimestamp(time.time()),
+                end_time=datetime.fromtimestamp(time.time()),
+                operation_count=0,
+                explicit_mode=True,
+                actors=set(),
+                operations=[],
+                records=[],
+                sub_operations=[],
+                custom_metrics={},
+                request_count=0,
+            )
+
+    def end_operation(self) -> Optional[OperationGroup]:
+        """
+        End the current operation in explicit mode.
+
+        Returns:
+            Completed OperationGroup if in explicit mode, None otherwise
+        """
+        with self._lock:
+            if self.current_group and self.current_group.explicit_mode:
+                import time
+
+                self.current_group.end_time = datetime.fromtimestamp(time.time())
+                completed_group = self.current_group
+                self.current_group = None
+
+                # Generate operation table for explicit operations
+                self._generate_operation_table(completed_group)
+
+                return completed_group
+            return None
+
+    def is_explicit_mode(self) -> bool:
+        """
+        Check if aggregator is in explicit mode.
+
+        Returns:
+            True if currently in explicit mode, False otherwise
+        """
+        return self.current_group is not None and self.current_group.explicit_mode
+
+    def _detect_sub_operations(self, record: BufferedLogRecord) -> Optional[str]:
+        """
+        Detect sub-operation based on log record content.
+
+        Args:
+            record: Log record to analyze
+
+        Returns:
+            Detected sub-operation name or None
+        """
+        message = safe_get_message(record.record)
+
+        # Analyze patterns for handle_request_cycle calls
+        if "handle_request_cycle" not in message:
+            return self._detect_non_request_operations(message)
+
+        # Extract OperationType from handle_request_cycle messages
+        operation_types = {
+            "OperationType.GET_ALL_DATA": "GET_ALL_DATA",
+            "OperationType.ADD_NEW_SERIES": "ADD_NEW_SERIES",
+            "OperationType.GET_SERIES": "GET_SERIES",
+            "OperationType.UPDATE_SERIES": "UPDATE_SERIES",
+            "OperationType.MODEL_FREE_CALCULATION": "MODEL_FREE_CALCULATION",
+            "OperationType.MODEL_FIT_CALCULATION": "MODEL_FIT_CALCULATION",
+            "OperationType.DECONVOLUTION": "DECONVOLUTION",
+        }
+
+        for pattern, operation in operation_types.items():
+            if pattern in message:
+                return operation
+
+        # Generic handle_request_cycle pattern
+        return "handle_request_cycle"
+
+    def _detect_non_request_operations(self, message: str) -> Optional[str]:
+        """Detect non-request sub-operations."""
+        if "Data Processing" in message or "data processing" in message:
+            return "Data Processing"
+        if "UI Updates" in message or "ui updates" in message:
+            return "UI Updates"
+        return None
+
+    def _generate_operation_table(self, group: OperationGroup) -> None:
+        """
+        Generate operation table for completed group.
+
+        Args:
+            group: Completed operation group
+        """
+        # This method will be expanded in later stages
+        # For now, just log the operation summary
+        duration = (group.end_time - group.start_time).total_seconds()
+
+        self._logger.info(
+            f"Operation table for {group.operation_name}: "
+            f"Duration: {duration:.3f}s, "
+            f"Sub-operations: {len(group.sub_operations)}, "
+            f"Requests: {group.request_count}, "
+            f"Records: {len(group.records)}"
+        )
 
     def get_aggregated_record(self, group: OperationGroup) -> BufferedLogRecord:
         """
