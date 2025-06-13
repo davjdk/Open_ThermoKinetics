@@ -19,7 +19,7 @@ class ErrorExpansionConfig:
     immediate_expansion: bool = True
     """Whether to expand errors immediately when detected"""
 
-    context_lines: int = 5
+    context_lines: int = 3
     """Number of preceding context lines to include in error expansion"""
 
     save_context: bool = False
@@ -28,11 +28,21 @@ class ErrorExpansionConfig:
     trace_depth: int = 10
     """Maximum depth of operation trace to analyze for errors"""
 
-    error_threshold_level: str = "WARNING"
+    error_threshold_level: str = "ERROR"
     """Minimum log level to trigger error expansion (WARNING/ERROR/CRITICAL)"""
 
-    context_time_window: float = 10.0
+    context_time_window: float = 5.0
     """Time window in seconds to look for related operations in error context"""
+
+    # New adaptive behavior settings
+    adaptive_threshold: bool = True
+    """Whether to adaptively adjust thresholds based on load"""
+
+    disable_on_high_load: bool = True
+    """Whether to disable error expansion during high load"""
+
+    max_expansions_per_minute: int = 10
+    """Maximum number of error expansions per minute"""
 
 
 @dataclass
@@ -56,6 +66,23 @@ class TabularFormattingConfig:
 
     auto_format_patterns: Optional[List[str]] = None
     """List of pattern types to automatically format as tables"""
+
+    # New priority-based configuration
+    priority_tables: List[str] = field(
+        default_factory=lambda: ["operation_cascade", "request_response_cycle", "error_analysis"]
+    )
+    """High-priority tables that should always be formatted"""
+
+    low_priority_tables: List[str] = field(
+        default_factory=lambda: ["plot_lines_addition", "gui_updates", "file_operations"]
+    )
+    """Low-priority tables that can be disabled under load"""
+
+    disable_low_priority_on_load: bool = True
+    """Whether to disable low-priority tables during high load"""
+
+    enabled_tables: Optional[List[str]] = None
+    """Specific list of enabled table types (overrides auto_format_patterns)"""
 
     def __post_init__(self):
         """Initialize default values for complex fields."""
@@ -200,6 +227,48 @@ class AggregationConfig:
     separate_debug_logging: bool = True
     """Whether to use separate debug logging for internal aggregator logs"""
 
+    # Stage 3: Optimization Monitoring settings
+    optimization_monitoring_enabled: bool = True
+    """Whether optimization monitoring is enabled"""
+
+    optimization_update_interval: float = 1.0
+    """Interval in seconds between optimization monitoring updates"""
+
+    optimization_progress_report_interval: float = 10.0
+    """Interval for optimization progress reporting in seconds"""
+
+    optimization_convergence_window: int = 10
+    """Number of iterations to check for convergence"""
+
+    optimization_stall_threshold: int = 50
+    """Number of iterations without improvement to consider stalled"""
+
+    # Performance monitoring settings
+    performance_monitoring_enabled: bool = True
+    """Whether performance monitoring is enabled"""
+
+    performance_collection_interval: float = 5.0
+    """Interval in seconds between performance metric collection"""
+
+    performance_memory_threshold_mb: float = 500.0
+    """Memory threshold in MB for performance warnings"""
+
+    performance_processing_time_threshold_ms: float = 100.0
+    """Processing time threshold in ms for performance warnings"""
+
+    # Operation monitoring settings
+    operation_monitoring_enabled: bool = True
+    """Whether operation monitoring is enabled"""
+
+    operation_timeout_seconds: float = 300.0
+    """Timeout for individual operations"""
+
+    operation_flow_timeout_seconds: float = 600.0
+    """Timeout for operation flows"""
+
+    operation_slow_threshold_ms: float = 1000.0
+    """Threshold for slow operation warnings"""
+
     # Legacy settings for backward compatibility
     pattern_similarity_threshold: float = 0.8
     enhanced_patterns_enabled: bool = True
@@ -260,8 +329,9 @@ class AggregationConfig:
     @classmethod
     def default(cls) -> "AggregationConfig":
         """Create default configuration."""
-        return cls() @ classmethod
+        return cls()
 
+    @classmethod
     def minimal(cls) -> "AggregationConfig":
         """Create minimal configuration for development/testing."""
         return cls(buffer_size=20, flush_interval=2.0, min_pattern_entries=2, pattern_similarity_threshold=0.9)
@@ -426,3 +496,111 @@ class AggregationConfig:
             config.value_aggregation = ValueAggregationConfig(**config_dict["value_aggregation"])
 
         return config
+
+
+@dataclass
+class OptimizationMonitoringConfig:
+    """Configuration for optimization monitoring."""
+
+    enabled: bool = True
+    """Whether optimization monitoring is enabled"""
+
+    update_interval: float = 1.0
+    """Interval in seconds between monitoring updates"""
+
+    progress_report_interval: float = 10.0
+    """Interval for progress reporting in seconds"""
+
+    convergence_window: int = 10
+    """Number of iterations to check for convergence"""
+
+    stall_threshold: int = 50
+    """Number of iterations without improvement to consider stalled"""
+
+    min_improvement_threshold: float = 1e-6
+    """Minimum improvement to consider progress"""
+
+    max_error_history: int = 1000
+    """Maximum number of error values to keep in history"""
+
+    enable_convergence_analysis: bool = True
+    """Whether to perform convergence analysis"""
+
+    enable_time_estimation: bool = True
+    """Whether to estimate remaining time"""
+
+    enable_parameter_tracking: bool = True
+    """Whether to track parameter changes"""
+
+    log_level: str = "INFO"
+    """Log level for optimization monitoring"""
+
+
+@dataclass
+class PerformanceMonitoringConfig:
+    """Configuration for performance monitoring."""
+
+    enabled: bool = True
+    """Whether performance monitoring is enabled"""
+
+    collection_interval: float = 5.0
+    """Interval in seconds between metric collection"""
+
+    history_size: int = 1000
+    """Number of metrics to keep in history"""
+
+    memory_threshold_mb: float = 500.0
+    """Memory threshold in MB for warnings"""
+
+    processing_time_threshold_ms: float = 100.0
+    """Processing time threshold in ms for warnings"""
+
+    enable_detailed_profiling: bool = False
+    """Whether to enable detailed profiling (impacts performance)"""
+
+    enable_gc_monitoring: bool = True
+    """Whether to monitor garbage collection"""
+
+    log_warnings: bool = True
+    """Whether to log performance warnings"""
+
+    log_level: str = "INFO"
+    """Log level for performance monitoring"""
+
+
+@dataclass
+class OperationMonitoringConfig:
+    """Configuration for operation monitoring."""
+
+    enabled: bool = True
+    """Whether operation monitoring is enabled"""
+
+    max_operation_history: int = 10000
+    """Maximum number of operations to keep in history"""
+
+    max_flow_history: int = 1000
+    """Maximum number of flows to keep in history"""
+
+    operation_timeout_seconds: float = 300.0
+    """Timeout for individual operations"""
+
+    flow_timeout_seconds: float = 600.0
+    """Timeout for operation flows"""
+
+    enable_performance_tracking: bool = True
+    """Whether to track operation performance"""
+
+    enable_flow_analysis: bool = True
+    """Whether to analyze operation flows"""
+
+    enable_memory_tracking: bool = True
+    """Whether to track memory usage"""
+
+    slow_operation_threshold_ms: float = 1000.0
+    """Threshold for slow operation warnings"""
+
+    flow_analysis_window_seconds: float = 60.0
+    """Time window for flow analysis"""
+
+    log_level: str = "INFO"
+    """Log level for operation monitoring"""

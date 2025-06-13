@@ -10,7 +10,11 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 from .buffer_manager import BufferedLogRecord
+from .config import OperationMonitoringConfig, OptimizationMonitoringConfig, PerformanceMonitoringConfig
+from .operation_monitor import OperationMonitor
+from .optimization_monitor import OptimizationMonitor
 from .pattern_detector import LogPattern, PatternGroup
+from .performance_monitor import PerformanceMonitor
 from .safe_message_utils import safe_get_message
 
 
@@ -73,18 +77,41 @@ class AggregationEngine:
     """
     Core engine for aggregating log records based on detected patterns.
 
-    This is a basic implementation for Stage 1. More sophisticated
-    aggregation strategies will be added in later stages.
+    Enhanced with Stage 3 monitoring capabilities for optimization,
+    performance, and operation tracking.
     """
 
-    def __init__(self, min_pattern_entries: int = 2):
+    def __init__(
+        self,
+        min_pattern_entries: int = 2,
+        enable_optimization_monitoring: bool = True,
+        enable_performance_monitoring: bool = True,
+        enable_operation_monitoring: bool = True,
+    ):
         """
-        Initialize aggregation engine.
+        Initialize aggregation engine with monitoring capabilities.
 
         Args:
             min_pattern_entries: Minimum number of entries required to create aggregation
+            enable_optimization_monitoring: Whether to enable optimization monitoring
+            enable_performance_monitoring: Whether to enable performance monitoring
+            enable_operation_monitoring: Whether to enable operation monitoring
         """
         self.min_pattern_entries = min_pattern_entries
+
+        # Initialize monitoring components
+        self.optimization_monitor = None
+        self.performance_monitor = None
+        self.operation_monitor = None
+
+        if enable_optimization_monitoring:
+            self.optimization_monitor = OptimizationMonitor(OptimizationMonitoringConfig())
+
+        if enable_performance_monitoring:
+            self.performance_monitor = PerformanceMonitor(PerformanceMonitoringConfig())
+
+        if enable_operation_monitoring:
+            self.operation_monitor = OperationMonitor(OperationMonitoringConfig())
 
         # Statistics
         self._total_patterns_processed = 0
@@ -93,7 +120,7 @@ class AggregationEngine:
 
     def aggregate_patterns(self, patterns: List[LogPattern]) -> List[AggregatedLogRecord]:
         """
-        Aggregate detected patterns into aggregated log records.
+        Aggregate detected patterns into aggregated log records with performance monitoring.
 
         Args:
             patterns: List of detected patterns to aggregate
@@ -101,19 +128,91 @@ class AggregationEngine:
         Returns:
             List of aggregated log records
         """
+        # Start monitoring
+        monitoring_context = self._start_aggregation_monitoring(patterns)
+
+        try:
+            aggregated_records = self._process_patterns(patterns)
+            self._complete_aggregation_monitoring(monitoring_context, aggregated_records)
+            return aggregated_records
+        except Exception as e:
+            self._handle_aggregation_error(monitoring_context, e)
+            raise
+
+    def _start_aggregation_monitoring(self, patterns: List[LogPattern]) -> Dict[str, Any]:
+        """Start monitoring for aggregation process."""
+        context = {"operation_id": f"aggregate_patterns_{id(patterns)}"}
+
+        if self.performance_monitor:
+            context["start_time"] = self.performance_monitor.record_processing_start()
+
+        if self.operation_monitor:
+            self.operation_monitor.start_operation(
+                operation_id=context["operation_id"],
+                operation_type="PATTERN_AGGREGATION",
+                module="AggregationEngine",
+                parameters={"pattern_count": len(patterns)},
+            )
+
+        return context
+
+    def _process_patterns(self, patterns: List[LogPattern]) -> List[AggregatedLogRecord]:
+        """Process patterns into aggregated records."""
         aggregated_records = []
 
         for pattern in patterns:
             if len(pattern.records) >= self.min_pattern_entries:
-                aggregated = self._create_aggregated_record(pattern)
+                aggregated = self._process_single_pattern(pattern)
                 aggregated_records.append(aggregated)
-
-                # Update statistics
-                self._total_patterns_processed += 1
-                self._total_records_aggregated += len(pattern.records)
-                self._total_aggregations_created += 1
+                self._update_aggregation_statistics(pattern)
 
         return aggregated_records
+
+    def _process_single_pattern(self, pattern: LogPattern) -> AggregatedLogRecord:
+        """Process a single pattern with performance tracking."""
+        pattern_start = None
+        if self.performance_monitor:
+            pattern_start = self.performance_monitor.record_processing_start()
+
+        aggregated = self._create_aggregated_record(pattern)
+
+        if self.performance_monitor and pattern_start:
+            self.performance_monitor.record_processing_end(
+                pattern_start, records_processed=1, records_aggregated=len(pattern.records)
+            )
+            duration_ms = (self.performance_monitor.record_processing_start() - pattern_start) * 1000
+            self.performance_monitor.record_component_timing("aggregation", duration_ms)
+
+        return aggregated
+
+    def _update_aggregation_statistics(self, pattern: LogPattern) -> None:
+        """Update aggregation statistics."""
+        self._total_patterns_processed += 1
+        self._total_records_aggregated += len(pattern.records)
+        self._total_aggregations_created += 1
+
+    def _complete_aggregation_monitoring(
+        self, context: Dict[str, Any], aggregated_records: List[AggregatedLogRecord]
+    ) -> None:
+        """Complete monitoring for successful aggregation."""
+        if self.operation_monitor:
+            self.operation_monitor.complete_operation(
+                operation_id=context["operation_id"], result={"aggregated_count": len(aggregated_records)}
+            )
+
+        if self.performance_monitor and context.get("start_time"):
+            self.performance_monitor.record_processing_end(
+                context["start_time"],
+                records_processed=len(aggregated_records),
+                records_aggregated=len(aggregated_records),
+            )
+
+    def _handle_aggregation_error(self, context: Dict[str, Any], error: Exception) -> None:
+        """Handle aggregation errors in monitoring."""
+        if self.operation_monitor:
+            self.operation_monitor.complete_operation(
+                operation_id=context["operation_id"], status="FAILED", error_message=str(error)
+            )
 
     def _create_aggregated_record(self, pattern: LogPattern) -> AggregatedLogRecord:
         """Create an aggregated record from a pattern."""
@@ -293,7 +392,7 @@ class AggregationEngine:
         # Calculate averages
         for pattern_type, data in stats.items():
             if data["count"] > 0:
-                data["avg_duration_ms"] = data["total_duration_ms"] / data["count"]
+                data["avg_duration_ms"] = data["total_duration_ms"]
                 data["avg_records_per_group"] = data["total_records"] / data["count"]
 
         return stats
@@ -312,3 +411,100 @@ class AggregationEngine:
             List of aggregated records ready for output
         """
         return self.aggregate_pattern_groups(pattern_groups)
+
+    def get_monitoring_statistics(self) -> Dict[str, Any]:
+        """Get comprehensive monitoring statistics."""
+        stats = {
+            "aggregation_stats": self.get_statistics(),
+            "optimization_monitoring_enabled": self.optimization_monitor is not None,
+            "performance_monitoring_enabled": self.performance_monitor is not None,
+            "operation_monitoring_enabled": self.operation_monitor is not None,
+        }
+
+        if self.optimization_monitor:
+            stats["optimization_stats"] = self.optimization_monitor.get_statistics()
+
+        if self.performance_monitor:
+            stats["performance_stats"] = self.performance_monitor.get_performance_summary()
+
+        if self.operation_monitor:
+            stats["operation_stats"] = self.operation_monitor.get_operation_statistics()
+
+        return stats
+
+    def generate_monitoring_report(self) -> str:
+        """Generate comprehensive monitoring report."""
+        report_lines = ["🔧 AGGREGATION ENGINE MONITORING REPORT", "=" * 60]
+
+        # Basic aggregation stats
+        basic_stats = self.get_statistics()
+        report_lines.extend(
+            [
+                "📊 AGGREGATION STATISTICS",
+                f"Patterns Processed: {basic_stats['total_patterns_processed']}",
+                f"Records Aggregated: {basic_stats['total_records_aggregated']}",
+                f"Aggregations Created: {basic_stats['total_aggregations_created']}",
+                f"Avg Records/Aggregation: {basic_stats['average_records_per_aggregation']:.2f}",
+                "",
+            ]
+        )
+
+        # Performance monitoring report
+        if self.performance_monitor:
+            performance_report = self.performance_monitor.generate_performance_report()
+            report_lines.extend(["📈 PERFORMANCE MONITORING", performance_report, ""])
+
+        # Operation monitoring report
+        if self.operation_monitor:
+            operation_report = self.operation_monitor.generate_operation_report()
+            report_lines.extend(["🔄 OPERATION MONITORING", operation_report, ""])
+
+        # Optimization monitoring summary
+        if self.optimization_monitor:
+            opt_stats = self.optimization_monitor.get_statistics()
+            report_lines.extend(
+                [
+                    "🚀 OPTIMIZATION MONITORING",
+                    f"Active Optimizations: {opt_stats['active_optimizations']}",
+                    f"Completed Optimizations: {opt_stats['completed_optimizations']}",
+                    f"Total Optimization Time: {opt_stats['total_optimization_time']:.2f}s",
+                    f"Avg Optimization Time: {opt_stats['average_optimization_time']:.2f}s",
+                    "",
+                ]
+            )
+
+        report_lines.append("=" * 60)
+        return "\n".join(report_lines)
+
+    def optimize_performance(self) -> Dict[str, str]:
+        """Get performance optimization suggestions."""
+        suggestions = {}
+
+        if self.performance_monitor:
+            perf_suggestions = self.performance_monitor.optimize_performance()
+            suggestions.update(perf_suggestions)
+
+        if self.operation_monitor:
+            op_insights = self.operation_monitor.get_performance_insights()
+            if op_insights["recommendations"]:
+                suggestions["operation_monitoring"] = "; ".join(op_insights["recommendations"])
+
+        # Add aggregation-specific suggestions
+        stats = self.get_statistics()
+        if stats["average_records_per_aggregation"] < 2:
+            suggestions["aggregation_efficiency"] = (
+                "Low aggregation efficiency. Consider reducing min_pattern_entries threshold."
+            )
+
+        return suggestions
+
+    def shutdown_monitoring(self) -> None:
+        """Shutdown all monitoring components."""
+        if self.optimization_monitor:
+            self.optimization_monitor.shutdown()
+
+        if self.performance_monitor:
+            self.performance_monitor.shutdown()
+
+        if self.operation_monitor:
+            self.operation_monitor.shutdown()

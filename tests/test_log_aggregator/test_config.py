@@ -12,9 +12,9 @@ class TestAggregationConfig:
         """Test creating default configuration."""
         config = AggregationConfig.default()
 
-        assert config.buffer_size == 100
-        assert config.flush_interval == 5.0
-        assert config.min_pattern_entries == 2
+        assert config.buffer_size == 1000
+        assert config.flush_interval == 2.0
+        assert config.min_pattern_entries == 3
         assert config.pattern_similarity_threshold == 0.8
         assert config.max_processing_time == 0.1
         assert config.enabled is True
