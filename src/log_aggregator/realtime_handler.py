@@ -17,7 +17,7 @@ except ImportError:
 
 from .aggregation_engine import AggregationEngine
 from .buffer_manager import BufferedLogRecord, BufferManager
-from .config import AggregationConfig
+from .config import AggregationConfig, TabularFormattingConfig
 from .error_expansion import ErrorExpansionConfig, ErrorExpansionEngine
 from .operation_aggregator import OperationAggregationConfig, OperationAggregator
 from .pattern_detector import PatternDetector
@@ -26,26 +26,43 @@ from .value_aggregator import ValueAggregationConfig, ValueAggregator
 
 
 class AggregatingHandler(logging.Handler):
-    """
-    Custom logging handler that provides real-time log aggregation.
+    """Custom logging handler that provides real-time log aggregation.
 
     This handler buffers log records, detects patterns, and outputs
     aggregated summaries while maintaining compatibility with existing
     logging infrastructure.
     """
 
-    def __init__(self, target_handler: Optional[logging.Handler] = None, config: Optional[AggregationConfig] = None):
+    def __init__(
+        self,
+        target_handler: Optional[logging.Handler] = None,
+        config: Optional[AggregationConfig] = None,
+        enable_error_expansion: bool = True,
+        enable_tabular_formatting: bool = True,
+        enable_operation_aggregation: bool = True,
+        enable_value_aggregation: bool = True,
+    ):
         """
         Initialize aggregating handler.
 
         Args:
             target_handler: Handler to forward aggregated records to
             config: Configuration for aggregation behavior
+            enable_error_expansion: Whether to enable error expansion
+            enable_tabular_formatting: Whether to enable tabular formatting
+            enable_operation_aggregation: Whether to enable operation aggregation
+            enable_value_aggregation: Whether to enable value aggregation
         """
         super().__init__()
 
         self.config = config or AggregationConfig.default()
         self.target_handler = target_handler
+
+        # Store enable flags
+        self.enable_error_expansion = enable_error_expansion
+        self.enable_tabular_formatting = enable_tabular_formatting
+        self.enable_operation_aggregation = enable_operation_aggregation
+        self.enable_value_aggregation = enable_value_aggregation
 
         # Initialize components
         self.buffer_manager = BufferManager(max_size=self.config.buffer_size, flush_interval=self.config.flush_interval)
@@ -55,39 +72,24 @@ class AggregatingHandler(logging.Handler):
         self.aggregation_engine = AggregationEngine(min_pattern_entries=self.config.min_pattern_entries)
 
         # Tabular formatter (Stage 3)
-        self.tabular_formatter = TabularFormatter(config=self.config.tabular_formatting)
-        self.enable_tabular_format = self.config.tabular_formatting.enabled  # Error expansion engine (Stage 4)
-        error_config = ErrorExpansionConfig(
-            enabled=getattr(self.config, "error_expansion_enabled", True),
-            context_lines=getattr(self.config, "error_context_lines", 5),
-            trace_depth=getattr(self.config, "error_trace_depth", 10),
-            immediate_expansion=getattr(self.config, "error_immediate_expansion", True),
-            error_threshold_level=getattr(self.config, "error_threshold_level", "WARNING"),
-            context_time_window=getattr(self.config, "error_context_time_window", 10.0),
-        )
+        tabular_config = self.config.tabular_formatting or TabularFormattingConfig()
+        tabular_config.enabled = enable_tabular_formatting
+        self.tabular_formatter = TabularFormatter(config=tabular_config)
+
+        # Error expansion engine (Stage 4)
+        error_config = self.config.error_expansion or ErrorExpansionConfig()
+        error_config.enabled = enable_error_expansion
         self.error_expansion_engine = ErrorExpansionEngine(config=error_config)
-        self.enable_error_expansion = error_config.enabled
 
         # Operation aggregator (Stage 4.5)
-        operation_config = OperationAggregationConfig(
-            enabled=getattr(self.config, "operation_aggregation_enabled", True),
-            cascade_window=getattr(self.config, "operation_cascade_window", 1.0),
-            min_cascade_size=getattr(self.config, "operation_min_cascade_size", 3),
-        )
+        operation_config = self.config.operation_aggregation or OperationAggregationConfig()
+        operation_config.enabled = enable_operation_aggregation
         self.operation_aggregator = OperationAggregator(config=operation_config)
-        self.enable_operation_aggregation = operation_config.enabled
 
         # Value aggregator (Stage 4.5)
-        value_config = ValueAggregationConfig(
-            enabled=getattr(self.config, "value_aggregation_enabled", True),
-            array_threshold=getattr(self.config, "value_array_threshold", 10),
-            dataframe_threshold=getattr(self.config, "value_dataframe_threshold", 5),
-            dict_threshold=getattr(self.config, "value_dict_threshold", 8),
-            string_threshold=getattr(self.config, "value_string_threshold", 200),
-            cache_size_limit=getattr(self.config, "value_cache_size_limit", 100),
-        )
+        value_config = self.config.value_aggregation or ValueAggregationConfig()
+        value_config.enabled = enable_value_aggregation
         self.value_aggregator = ValueAggregator(config=value_config)
-        self.enable_value_aggregation = value_config.enabled
 
         # Processing control
         self._processing_lock = threading.RLock()
@@ -210,7 +212,7 @@ class AggregatingHandler(logging.Handler):
                 aggregated_records = self.aggregation_engine.process_records(records, patterns)
 
                 # Tabular formatting (Stage 3)
-                if self.enable_tabular_format and patterns:
+                if self.enable_tabular_formatting and patterns:
                     table_records = self.tabular_formatter.format_patterns_as_tables(patterns)
                     aggregated_records.extend(table_records)
                     self._tables_generated += len(table_records)
@@ -252,11 +254,11 @@ class AggregatingHandler(logging.Handler):
             else:
                 # BufferedLogRecord (from tabular formatter)
                 log_record = logging.LogRecord(
-                    name=aggregated_record.logger_name,
-                    level=aggregated_record.level_no,
+                    name=aggregated_record.record.name,
+                    level=aggregated_record.record.levelno,
                     pathname="",
                     lineno=0,
-                    msg=aggregated_record.message,
+                    msg=aggregated_record.record.getMessage(),
                     args=(),
                     exc_info=None,
                 )
@@ -316,7 +318,7 @@ class AggregatingHandler(logging.Handler):
 
     def toggle_tabular_format(self, enabled: bool) -> None:
         """Enable or disable tabular formatting."""
-        self.enable_tabular_format = enabled
+        self.enable_tabular_formatting = enabled
         self.tabular_formatter.toggle_tabular_format(enabled)
         if enabled:
             self._logger.info("Tabular formatting enabled")
@@ -359,7 +361,7 @@ class AggregatingHandler(logging.Handler):
                 ),
                 "enabled": self._enabled,
                 "tables_generated": self._tables_generated,
-                "tabular_formatting_enabled": self.enable_tabular_format,
+                "tabular_formatting_enabled": self.enable_tabular_formatting,
                 "errors_expanded": self._errors_expanded,
                 "error_expansion_enabled": self.enable_error_expansion,
             },

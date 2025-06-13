@@ -9,9 +9,10 @@ class LoggerManager:
 
     _configured = False
     _root_logger_name = "solid_state_kinetics"
+    _aggregating_handlers = []  # Store references to aggregating handlers
 
     @classmethod
-    def configure_logging(
+    def configure_logging(  # noqa: C901
         cls,
         log_level: int = logging.DEBUG,
         console_level: Optional[int] = None,
@@ -21,6 +22,11 @@ class LoggerManager:
         backup_count: int = 5,
         enable_aggregation: bool = False,
         aggregation_config: Optional[dict] = None,
+        enable_error_expansion: bool = True,
+        enable_tabular_format: bool = True,
+        enable_operation_aggregation: bool = True,
+        enable_value_aggregation: bool = True,
+        aggregation_preset: str = "default",
     ) -> None:
         """
         Configure application-wide logging with both console and file handlers.
@@ -81,16 +87,42 @@ class LoggerManager:
             try:
                 from src.log_aggregator import AggregatingHandler, AggregationConfig
 
-                # Create aggregation configuration
-                agg_config = AggregationConfig()
+                # Create aggregation configuration based on preset
+                if aggregation_preset == "minimal":
+                    agg_config = AggregationConfig.create_minimal()
+                elif aggregation_preset == "performance":
+                    agg_config = AggregationConfig.create_performance()
+                elif aggregation_preset == "detailed":
+                    agg_config = AggregationConfig.create_detailed()
+                else:
+                    agg_config = AggregationConfig()
+
+                # Override with specific parameters
                 if aggregation_config:
                     # Update config with provided values
                     for key, value in aggregation_config.items():
                         if hasattr(agg_config, key):
                             setattr(agg_config, key, value)
 
+                # Update component configurations
+                if agg_config.error_expansion:
+                    agg_config.error_expansion.enabled = enable_error_expansion
+                if agg_config.tabular_formatting:
+                    agg_config.tabular_formatting.enabled = enable_tabular_format
+                if agg_config.operation_aggregation:
+                    agg_config.operation_aggregation.enabled = enable_operation_aggregation
+                if agg_config.value_aggregation:
+                    agg_config.value_aggregation.enabled = enable_value_aggregation
+
                 # Create aggregating handler that wraps the console handler
-                aggregating_handler = AggregatingHandler(target_handler=console_handler, config=agg_config)
+                aggregating_handler = AggregatingHandler(
+                    target_handler=console_handler,
+                    config=agg_config,
+                    enable_error_expansion=enable_error_expansion,
+                    enable_tabular_formatting=enable_tabular_format,
+                    enable_operation_aggregation=enable_operation_aggregation,
+                    enable_value_aggregation=enable_value_aggregation,
+                )
                 aggregating_handler.setLevel(console_level)
                 aggregating_handler.setFormatter(console_formatter)
 
@@ -98,7 +130,14 @@ class LoggerManager:
                 root_logger.removeHandler(console_handler)
                 root_logger.addHandler(aggregating_handler)
 
-                root_logger.info("Log aggregation enabled")
+                # Store reference for runtime management
+                cls._aggregating_handlers.append(aggregating_handler)
+
+                root_logger.info(f"Log aggregation enabled with preset: {aggregation_preset}")
+                root_logger.info(f"Error expansion: {enable_error_expansion}")
+                root_logger.info(f"Tabular formatting: {enable_tabular_format}")
+                root_logger.info(f"Operation aggregation: {enable_operation_aggregation}")
+                root_logger.info(f"Value aggregation: {enable_value_aggregation}")
             except Exception as e:
                 root_logger.error(f"Failed to configure log aggregation: {e}")
                 # Fallback: keep original console handler
@@ -154,15 +193,133 @@ class LoggerManager:
 
         # Remove 'src.' prefix if present
         if module_name.startswith("src."):
-            return module_name[4:]
-
-        # Remove full path prefixes like 'solid_state_kinetics.src.'
+            return module_name[4:]  # Remove full path prefixes like 'solid_state_kinetics.src.'
         if "src." in module_name:
             parts = module_name.split("src.")
             if len(parts) > 1:
                 return parts[-1]
 
         return module_name
+
+    @classmethod
+    def toggle_aggregation(cls, enabled: bool) -> None:
+        """Enable/disable aggregation in runtime."""
+        for handler in cls._aggregating_handlers:
+            if hasattr(handler, "enabled"):
+                handler.enabled = enabled
+
+    @classmethod
+    def toggle_error_expansion(cls, enabled: bool) -> None:
+        """Enable/disable error expansion in runtime."""
+        for handler in cls._aggregating_handlers:
+            if hasattr(handler, "enable_error_expansion"):
+                handler.enable_error_expansion = enabled
+
+    @classmethod
+    def toggle_tabular_format(cls, enabled: bool) -> None:
+        """Enable/disable tabular formatting in runtime."""
+        for handler in cls._aggregating_handlers:
+            if hasattr(handler, "enable_tabular_formatting"):
+                handler.enable_tabular_formatting = enabled
+
+    @classmethod
+    def toggle_operation_aggregation(cls, enabled: bool) -> None:
+        """Enable/disable operation aggregation in runtime."""
+        for handler in cls._aggregating_handlers:
+            if hasattr(handler, "enable_operation_aggregation"):
+                handler.enable_operation_aggregation = enabled
+
+    @classmethod
+    def toggle_value_aggregation(cls, enabled: bool) -> None:
+        """Enable/disable value aggregation in runtime."""
+        for handler in cls._aggregating_handlers:
+            if hasattr(handler, "enable_value_aggregation"):
+                handler.enable_value_aggregation = enabled
+
+    @classmethod
+    def get_aggregation_stats(cls) -> dict:
+        """Get extended aggregation statistics including aggregators."""
+        combined_stats = {
+            "handlers": {},
+            "total_stats": {
+                "total_records": 0,
+                "aggregated_records": 0,
+                "patterns_detected": 0,
+                "errors_expanded": 0,
+                "tables_generated": 0,
+                "buffer_flushes": 0,
+                "operation_cascades_aggregated": 0,
+                "values_compressed": 0,
+                "cache_hits_on_errors": 0,
+            },
+        }
+
+        for i, handler in enumerate(cls._aggregating_handlers):
+            handler_stats = {}
+            if hasattr(handler, "get_statistics"):
+                handler_stats = handler.get_statistics()
+            elif hasattr(handler, "stats"):
+                handler_stats = handler.stats
+
+            combined_stats["handlers"][f"handler_{i}"] = handler_stats
+
+            # Aggregate totals
+            for key in combined_stats["total_stats"]:
+                if key in handler_stats:
+                    combined_stats["total_stats"][key] += handler_stats[key]
+
+        # Calculate derived metrics
+        total_processed = combined_stats["total_stats"]["total_records"]
+        if total_processed > 0:
+            combined_stats["total_stats"]["compression_ratio"] = (
+                1 - combined_stats["total_stats"]["aggregated_records"] / total_processed
+            )
+            combined_stats["total_stats"]["error_expansion_ratio"] = (
+                combined_stats["total_stats"]["errors_expanded"] / total_processed
+            )
+            combined_stats["total_stats"]["operation_compression_ratio"] = (
+                combined_stats["total_stats"]["operation_cascades_aggregated"] / total_processed
+            )
+            combined_stats["total_stats"]["value_compression_ratio"] = (
+                combined_stats["total_stats"]["values_compressed"] / total_processed
+            )
+
+        return combined_stats
+
+    @classmethod
+    def export_aggregation_config(cls) -> dict:
+        """Export current aggregation configuration."""
+        config_data = {}
+        for i, handler in enumerate(cls._aggregating_handlers):
+            if hasattr(handler, "config"):
+                if hasattr(handler.config, "to_dict"):
+                    config_data[f"handler_{i}"] = handler.config.to_dict()
+                else:
+                    config_data[f"handler_{i}"] = str(handler.config)
+        return config_data
+
+    @classmethod
+    def update_aggregation_config(cls, config_updates: dict) -> None:  # noqa: C901
+        """Update aggregation configuration in runtime."""
+        for handler in cls._aggregating_handlers:
+            if hasattr(handler, "config"):
+                # Update basic configuration fields
+                for key, value in config_updates.items():
+                    if hasattr(handler.config, key):
+                        setattr(handler.config, key, value)
+
+                # Update component configurations
+                if "operation_aggregation" in config_updates and hasattr(handler.config, "operation_aggregation"):
+                    op_config = config_updates["operation_aggregation"]
+                    for key, value in op_config.items():
+                        if hasattr(handler.config.operation_aggregation, key):
+                            setattr(handler.config.operation_aggregation, key, value)
+
+                if "value_aggregation" in config_updates and hasattr(handler.config, "value_aggregation"):
+                    val_config = config_updates["value_aggregation"]
+                    for key, value in val_config.items():
+                        if hasattr(handler.config.value_aggregation, key):
+                            setattr(handler.config.value_aggregation, key, value)
 
 
 def configure_logger(log_level: int = logging.INFO) -> logging.Logger:

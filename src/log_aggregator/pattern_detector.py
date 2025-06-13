@@ -46,11 +46,19 @@ class LogPattern:
     last_seen: float
     """Timestamp when this pattern was last seen"""
 
+    pattern_type: str = "basic_similarity"
+    """Type of the pattern (e.g., plot_lines_addition, basic_similarity)"""
+
     def add_record(self, record: BufferedLogRecord) -> None:
         """Add a record to this pattern."""
         self.records.append(record)
         self.count += 1
         self.last_seen = record.timestamp.timestamp()
+
+    def get_table_suitable_flag(self) -> bool:
+        """Check if this pattern is suitable for tabular representation."""
+        # Basic LogPattern objects are generally suitable for tables
+        return True
 
 
 @dataclass
@@ -203,6 +211,9 @@ class PatternDetector:
         pattern_id = f"pattern_{self._next_pattern_id}"
         self._next_pattern_id += 1
 
+        # Determine pattern type based on first record
+        pattern_type = self._get_enhanced_pattern_key(records[0])
+
         # Create template from the first message (simple approach for Stage 1)
         template = records[0].record.getMessage()
 
@@ -213,6 +224,7 @@ class PatternDetector:
         # Create pattern
         pattern = LogPattern(
             pattern_id=pattern_id,
+            pattern_type=pattern_type,
             template=template,
             records=records.copy(),
             count=len(records),
