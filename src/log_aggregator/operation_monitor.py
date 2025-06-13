@@ -6,13 +6,14 @@ and system state changes with performance analysis.
 """
 
 import logging
+import re
 import threading
 import time
 from collections import defaultdict, deque
 from dataclasses import dataclass, field
 from datetime import datetime
 from enum import Enum
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 
 class OperationStatus(Enum):
@@ -70,6 +71,77 @@ class OperationMetrics:
 
     warnings: List[str] = field(default_factory=list)
     """Operation warnings"""
+
+    # New enhanced metrics for Stage 3
+    request_count: int = 0
+    """Number of requests made during operation"""
+
+    response_count: int = 0
+    """Number of responses received during operation"""
+
+    warning_count: int = 0
+    """Number of warnings during operation"""
+
+    error_count: int = 0
+    """Number of errors during operation"""
+
+    custom_metrics: Dict[str, Any] = field(default_factory=dict)
+    """Custom domain-specific metrics"""
+
+    components_involved: Set[str] = field(default_factory=set)
+    """Set of components involved in operation"""
+
+    sub_operations: List[str] = field(default_factory=list)
+    """List of detected sub-operations"""
+
+    @property
+    def enhanced_status(self) -> str:
+        """Enhanced status based on errors/warnings"""
+        if self.error_count > 0:
+            return "ERROR"
+        elif self.warning_count > 0:
+            return "WARNING"
+        else:
+            return "SUCCESS"
+
+
+@dataclass
+class LogMetricsExtractor:
+    """Extractor for metrics from log messages."""
+
+    METRIC_PATTERNS = {
+        r"handle_request_cycle.*OperationType\.(\w+)": "sub_operation",
+        r"operation.*completed.*?(\d+\.?\d*)\s*seconds": "duration",
+        r"operation.*completed.*?(\d+\.?\d*)\s*ms": "duration",
+        r"processing (\d+) files": "file_count",
+        r"(\d+) reactions found": "reaction_count",
+        r"found (\d+) reactions": "reaction_count",
+        r"MSE:\s*(\d+\.?\d*)": "mse_value",
+        r"R²:\s*(\d+\.?\d*)": "r_squared",
+        r"heating rate:\s*(\d+\.?\d*)": "heating_rate",
+        r"iterations:\s*(\d+)": "iteration_count",
+        r"convergence:\s*(\d+\.?\d*)": "convergence_value",
+        r"method:\s*([A-Za-z_-]+)": "optimization_method",
+        r"cpu usage:\s*(\d+\.?\d*)%?": "cpu_usage",
+        r"memory.*?(\d+\.?\d*)\s*MB": "memory_usage_mb",
+    }
+
+    @classmethod
+    def extract_metrics(cls, message: str) -> Dict[str, Any]:
+        """Extract metrics from log message."""
+        metrics = {}
+
+        for pattern, metric_name in cls.METRIC_PATTERNS.items():
+            match = re.search(pattern, message, re.IGNORECASE)
+            if match:
+                value = match.group(1)
+                # Try to convert to number
+                try:
+                    metrics[metric_name] = float(value) if "." in value else int(value)
+                except ValueError:
+                    metrics[metric_name] = value
+
+        return metrics
 
 
 @dataclass
@@ -193,6 +265,12 @@ class OperationMonitor:
         self._monitoring_thread: Optional[threading.Thread] = None
         self._stop_monitoring = threading.Event()
 
+        # Enhanced metrics tracking for Stage 3
+        self.current_operation: Optional[OperationMetrics] = None
+        self.completed_operations: List[OperationMetrics] = []
+        self.operation_stack: List[OperationMetrics] = []  # For nested operations
+        self.metrics_extractor = LogMetricsExtractor()
+
         # Flow detection patterns
         self._flow_patterns = {
             "deconvolution_flow": ["LOAD_FILE", "GET_DF_DATA", "DECONVOLUTION"],
@@ -315,6 +393,206 @@ class OperationMonitor:
         with self._lock:
             return dict(self._operation_stats)
 
+    # Enhanced methods for Stage 3 - Operation Metrics Collection
+
+    def start_operation_tracking(self, name: str) -> None:
+        """Start tracking new operation with enhanced metrics."""
+        # If there's current operation, save it to stack for nested operations
+        if self.current_operation:
+            self.operation_stack.append(self.current_operation)
+
+        self.current_operation = OperationMetrics(
+            operation_id=f"op_{name}_{int(time.time() * 1000000)}",
+            operation_type=name,
+            module="enhanced_tracking",
+            start_time=datetime.now(),
+            status=OperationStatus.RUNNING,
+        )
+
+    def end_operation_tracking(self) -> Optional[OperationMetrics]:
+        """End tracking current operation and return metrics."""
+        if not self.current_operation:
+            return None
+
+        self.current_operation.end_time = datetime.now()
+        if self.current_operation.start_time and self.current_operation.end_time:
+            duration = (self.current_operation.end_time - self.current_operation.start_time).total_seconds() * 1000
+            self.current_operation.duration_ms = duration
+
+        # Set final status based on error/warning counts only if not already set to a terminal state
+        if self.current_operation.status == OperationStatus.RUNNING:
+            if self.current_operation.error_count > 0:
+                self.current_operation.status = OperationStatus.FAILED
+            else:
+                self.current_operation.status = OperationStatus.COMPLETED
+
+        completed = self.current_operation
+        self.completed_operations.append(completed)
+
+        # Restore previous operation from stack
+        self.current_operation = self.operation_stack.pop() if self.operation_stack else None
+
+        return completed
+
+    def add_custom_metric(self, key: str, value: Any) -> None:
+        """Add custom metric to current operation."""
+        if self.current_operation:
+            self.current_operation.custom_metrics[key] = value
+
+    def track_request(self, source: str, target: str, operation: str) -> None:
+        """Track request in current operation."""
+        if self.current_operation:
+            self.current_operation.request_count += 1
+            self.current_operation.components_involved.add(source)
+            self.current_operation.components_involved.add(target)
+
+        # Call existing tracking logic if available
+        if hasattr(self, "_track_request_original"):
+            self._track_request_original(source, target, operation)
+
+    def track_response(self, source: str, target: str, operation: str) -> None:
+        """Track response in current operation."""
+        if self.current_operation:
+            self.current_operation.response_count += 1
+
+        # Call existing tracking logic if available
+        if hasattr(self, "_track_response_original"):
+            self._track_response_original(source, target, operation)
+
+    def track_log_level(self, level: str, message: str = "") -> None:
+        """Track log level and extract metrics from message."""
+        if not self.current_operation:
+            return
+
+        if level == "WARNING":
+            self.current_operation.warning_count += 1
+        elif level == "ERROR":
+            self.current_operation.error_count += 1
+
+        # Extract metrics from log message if provided
+        if message:
+            extracted_metrics = self.metrics_extractor.extract_metrics(message)
+            for key, value in extracted_metrics.items():
+                self.add_custom_metric(key, value)
+
+    def add_performance_metrics(self) -> None:
+        """Add performance metrics to current operation."""
+        if not self.current_operation:
+            return
+
+        try:
+            import psutil
+
+            # CPU and memory usage
+            cpu_usage = psutil.cpu_percent()
+            memory_info = psutil.virtual_memory()
+
+            self.add_custom_metric("cpu_usage_percent", cpu_usage)
+            self.add_custom_metric("memory_usage_mb", memory_info.used / 1024 / 1024)
+            self.add_custom_metric("memory_available_mb", memory_info.available / 1024 / 1024)
+
+        except ImportError:
+            # psutil not available, skip performance metrics
+            pass
+
+    def track_optimization_metrics(self, optimization_data: dict) -> None:
+        """Track optimization-specific metrics."""
+        if not self.current_operation:
+            return
+
+        if "iteration_count" in optimization_data:
+            self.add_custom_metric("iterations", optimization_data["iteration_count"])
+
+        if "convergence_value" in optimization_data:
+            self.add_custom_metric("convergence", optimization_data["convergence_value"])
+
+        if "optimization_method" in optimization_data:
+            self.add_custom_metric("method", optimization_data["optimization_method"])
+
+        if "mse" in optimization_data:
+            self.add_custom_metric("final_mse", optimization_data["mse"])
+
+    def track_data_operation_metrics(self, operation_type: str, data_info: dict) -> None:
+        """Track data operation specific metrics."""
+        if not self.current_operation:
+            return
+
+        # Dispatch to specific handlers based on operation type
+        if operation_type == "ADD_NEW_SERIES":
+            self._track_series_metrics(data_info)
+        elif operation_type == "DECONVOLUTION":
+            self._track_deconvolution_metrics(data_info)
+        elif operation_type in ["MODEL_FIT_CALCULATION", "MODEL_FREE_CALCULATION"]:
+            self._track_calculation_metrics(data_info)
+
+    def _track_series_metrics(self, data_info: dict) -> None:
+        """Track metrics for series operations."""
+        if "file_count" in data_info:
+            self.add_custom_metric("files_processed", data_info["file_count"])
+        if "heating_rates" in data_info:
+            self.add_custom_metric("heating_rates", data_info["heating_rates"])
+
+    def _track_deconvolution_metrics(self, data_info: dict) -> None:
+        """Track metrics for deconvolution operations."""
+        if "reaction_count" in data_info:
+            self.add_custom_metric("reactions_found", data_info["reaction_count"])
+        if "mse" in data_info:
+            self.add_custom_metric("final_mse", data_info["mse"])
+        if "r_squared" in data_info:
+            self.add_custom_metric("r_squared", data_info["r_squared"])
+
+    def _track_calculation_metrics(self, data_info: dict) -> None:
+        """Track metrics for calculation operations."""
+        if "method" in data_info:
+            self.add_custom_metric("calculation_method", data_info["method"])
+        if "reaction_count" in data_info:
+            self.add_custom_metric("reactions_analyzed", data_info["reaction_count"])
+
+    def get_operation_metrics_for_aggregation(self) -> Dict[str, Any]:
+        """Get operation metrics for aggregation table."""
+        if not self.current_operation:
+            return {}
+
+        return {
+            "operation_name": self.current_operation.operation_type,
+            "duration": self.current_operation.duration_ms,
+            "request_count": self.current_operation.request_count,
+            "response_count": self.current_operation.response_count,
+            "warning_count": self.current_operation.warning_count,
+            "error_count": self.current_operation.error_count,
+            "status": self.current_operation.enhanced_status,
+            "components": list(self.current_operation.components_involved),
+            **self.current_operation.custom_metrics,
+        }
+
+    def check_operation_timeout(self, timeout_seconds: float = 30.0) -> None:
+        """Check timeout for current operation."""
+        if not self.current_operation:
+            return
+
+        current_time = datetime.now()
+        elapsed = (current_time - self.current_operation.start_time).total_seconds()
+
+        if elapsed > timeout_seconds:
+            self.logger.warning(f"Operation {self.current_operation.operation_type} timed out after {timeout_seconds}s")
+            self.add_custom_metric("timeout", True)
+            self.current_operation.status = OperationStatus.TIMEOUT
+            self.end_operation_tracking()
+
+    def extract_metrics_from_logs(self, log_records: List[Any]) -> None:
+        """Extract metrics from a batch of log records."""
+        if not self.current_operation:
+            return
+
+        for record in log_records:
+            if hasattr(record, "getMessage"):
+                message = record.getMessage()
+                # Extract metrics and track log levels
+                self.track_log_level(record.levelname, message)
+
+    # End of enhanced methods for Stage 3
+
+    # Original monitoring methods that were preserved
     def _detect_or_create_flow(self, operation_type: str, operation_id: str) -> Optional[str]:
         """Detect existing flow or create new flow for operation."""
         if not self.config.enable_flow_analysis:
@@ -344,52 +622,6 @@ class OperationMonitor:
                     return flow_id
 
         return None
-
-    def _update_flow_metrics(self, flow_id: str, operation_metrics: OperationMetrics) -> None:
-        """Update flow metrics when operation completes."""
-        if flow_id not in self._active_flows:
-            return
-
-        flow = self._active_flows[flow_id]
-
-        if operation_metrics.status == OperationStatus.COMPLETED:
-            flow.completed_operations += 1
-        elif operation_metrics.status == OperationStatus.FAILED:
-            flow.failed_operations += 1
-
-        # Update durations
-        if operation_metrics.duration_ms:
-            flow.total_duration_ms += operation_metrics.duration_ms
-
-        # Check if flow is complete
-        if flow.completed_operations + flow.failed_operations >= flow.total_operations:
-            flow.end_time = datetime.now()
-            if flow.start_time and flow.end_time:
-                flow.critical_path_ms = (flow.end_time - flow.start_time).total_seconds() * 1000
-
-            # Calculate parallelism factor
-            if flow.critical_path_ms > 0:
-                flow.parallelism_factor = flow.total_duration_ms / flow.critical_path_ms
-
-            # Determine overall status
-            if flow.failed_operations > 0:
-                flow.status = OperationStatus.FAILED
-            else:
-                flow.status = OperationStatus.COMPLETED
-
-            # Move to history
-            self._flow_history.append(flow)
-            del self._active_flows[flow_id]
-
-            # Clean up operation-to-flow mapping
-            for op_id in flow.operation_ids:
-                self._operation_to_flow.pop(op_id, None)
-
-            self.logger.info(
-                f"🔄 FLOW COMPLETED: {flow.root_operation_type} | ID: {flow_id} | "
-                f"Operations: {flow.total_operations} | Duration: {flow.critical_path_ms:.1f}ms | "
-                f"Parallelism: {flow.parallelism_factor:.2f}x"
-            )
 
     def _update_operation_stats(self, metrics: OperationMetrics) -> None:
         """Update operation statistics."""
@@ -450,23 +682,6 @@ class OperationMonitor:
                 )
                 self.complete_operation(op_id, OperationStatus.TIMEOUT, error_message="Operation timed out")
 
-            # Check flow timeouts
-            timed_out_flows = []
-            for flow_id, flow in self._active_flows.items():
-                elapsed = (current_time - flow.start_time).total_seconds()
-                if elapsed > self.config.flow_timeout_seconds:
-                    timed_out_flows.append(flow_id)
-
-            for flow_id in timed_out_flows:
-                flow = self._active_flows[flow_id]
-                self.logger.warning(
-                    f"⏰ FLOW TIMEOUT: {flow.root_operation_type} | ID: {flow_id} | " f"Elapsed: {elapsed:.1f}s"
-                )
-                flow.status = OperationStatus.TIMEOUT
-                flow.end_time = current_time
-                self._flow_history.append(flow)
-                del self._active_flows[flow_id]
-
     def _analyze_flows(self) -> None:
         """Analyze active flows for performance insights."""
         if not self.config.enable_flow_analysis:
@@ -485,103 +700,13 @@ class OperationMonitor:
                         f"No completed operations after {elapsed:.1f}s"
                     )
 
-                # Check for inefficient flows
-                if flow.total_operations > 5 and flow.parallelism_factor < 0.3:
-                    self.logger.warning(
-                        f"⚠️ INEFFICIENT FLOW: {flow.root_operation_type} | ID: {flow_id} | "
-                        f"Low parallelism: {flow.parallelism_factor:.2f}x"
-                    )
-
-    def generate_operation_report(self) -> str:
-        """Generate detailed operation report."""
-        with self._lock:
-            active_ops = len(self._active_operations)
-            active_flows = len(self._active_flows)
-            total_ops = len(self._operation_history)
-
-            report_lines = [
-                "🔧 OPERATION MONITORING REPORT",
-                "=" * 50,
-                f"📊 Active Operations: {active_ops}",
-                f"🔄 Active Flows: {active_flows}",
-                f"📈 Total Operations Processed: {total_ops}",
-                "",
-                "📋 OPERATION STATISTICS BY TYPE",
-                "-" * 30,
-            ]
-
-            for op_type, stats in self._operation_stats.items():
-                if stats["total_count"] > 0:
-                    success_rate = (stats["success_count"] / stats["total_count"]) * 100
-                    report_lines.extend(
-                        [
-                            f"{op_type}:",
-                            f"  Total: {stats['total_count']} | Success: {success_rate:.1f}%",
-                            f"  Avg Duration: {stats['avg_duration_ms']:.2f}ms",
-                            f"  Min/Max: {stats['min_duration_ms']:.2f}ms / {stats['max_duration_ms']:.2f}ms",
-                        ]
-                    )
-
-            if self._active_operations:
-                report_lines.extend(["", "🔄 ACTIVE OPERATIONS", "-" * 20])
-                for op_id, metrics in self._active_operations.items():
-                    elapsed = (datetime.now() - metrics.start_time).total_seconds()
-                    report_lines.append(f"{metrics.operation_type} | {op_id} | {elapsed:.1f}s | {metrics.module}")
-
-            report_lines.append("=" * 50)
-            return "\n".join(report_lines)
-
-    def get_performance_insights(self) -> Dict[str, Any]:
-        """Get performance insights and recommendations."""
-        with self._lock:
-            insights = {"slow_operations": [], "frequent_failures": [], "inefficient_flows": [], "recommendations": []}
-
-            # Analyze slow operations
-            for op_type, stats in self._operation_stats.items():
-                if stats["avg_duration_ms"] > self.config.slow_operation_threshold_ms and stats["total_count"] > 10:
-                    insights["slow_operations"].append(
-                        {
-                            "operation_type": op_type,
-                            "avg_duration_ms": stats["avg_duration_ms"],
-                            "count": stats["total_count"],
-                        }
-                    )
-
-            # Analyze failure rates
-            for op_type, stats in self._operation_stats.items():
-                if stats["total_count"] > 5:
-                    failure_rate = stats["failure_count"] / stats["total_count"]
-                    if failure_rate > 0.1:  # More than 10% failure rate
-                        insights["frequent_failures"].append(
-                            {
-                                "operation_type": op_type,
-                                "failure_rate": failure_rate,
-                                "total_count": stats["total_count"],
-                                "failure_count": stats["failure_count"],
-                            }
-                        )
-
-            # Generate recommendations
-            if insights["slow_operations"]:
-                insights["recommendations"].append(
-                    "Consider optimizing slow operations or increasing timeout thresholds"
-                )
-
-            if insights["frequent_failures"]:
-                insights["recommendations"].append(
-                    "Investigate operations with high failure rates for stability issues"
-                )
-
-            if len(self._active_operations) > 50:
-                insights["recommendations"].append("High number of active operations - consider optimizing concurrency")
-
-            return insights
-
     def shutdown(self) -> None:
         """Shutdown operation monitor."""
         self._stop_monitoring.set()
         if self._monitoring_thread and self._monitoring_thread.is_alive():
-            self._monitoring_thread.join(timeout=1.0)  # Complete any remaining operations
+            self._monitoring_thread.join(timeout=1.0)
+
+        # Complete any remaining operations
         with self._lock:
             for op_id in list(self._active_operations.keys()):
                 self.complete_operation(op_id, OperationStatus.FAILED, error_message="System shutdown")

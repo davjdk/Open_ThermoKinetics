@@ -7,12 +7,21 @@ into structured ASCII tables with adaptive formatting for improved readability.
 
 import re
 from dataclasses import dataclass
-from typing import List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
 
 from .buffer_manager import BufferedLogRecord
 from .config import TabularFormattingConfig
 from .pattern_detector import LogPattern, PatternGroup
 from .safe_message_utils import safe_get_message
+
+# Import OperationTableData if available
+try:
+    from .operation_table_builder import OperationTableData
+
+    OPERATION_TABLE_AVAILABLE = True
+except (ImportError, SyntaxError):
+    OperationTableData = None
+    OPERATION_TABLE_AVAILABLE = False
 
 
 @dataclass
@@ -50,15 +59,17 @@ class TabularFormatter:
         Args:
             config: Configuration for table formatting behavior
         """
-        self.config = config or TabularFormattingConfig()
-
-        # Pattern type to formatting method mapping
+        self.config = config or TabularFormattingConfig()  # Pattern type to formatting method mapping
         self._formatters = {
             "plot_lines_addition": self._create_plot_lines_table,
             "cascade_component_initialization": self._create_initialization_table,
             "request_response_cycle": self._create_request_response_table,
             "file_operations": self._create_file_operations_table,
             "gui_updates": self._create_gui_updates_table,
+            "operation_summary": self._create_operation_table,
+            "metrics_detail": self._create_operation_table,
+            "performance_metrics": self._create_operation_table,
+            "domain_specific": self._create_operation_table,
         }
 
     def format_patterns_as_tables(self, patterns: List[Union[PatternGroup, LogPattern]]) -> List[BufferedLogRecord]:
@@ -411,6 +422,113 @@ class TabularFormatter:
             pairs.append((request, None))
 
         return pairs
+
+    def _create_operation_table(self, operation_table_data) -> TableData:
+        """Create table for operation metrics data."""
+        if OperationTableData is None:
+            # Fallback for when OperationTableData is not available
+            return TableData(
+                title="Operation Table (Fallback)",
+                headers=["Info"],
+                rows=[["OperationTableBuilder not available"]],
+                summary="Please ensure operation_table_builder module is properly installed.",
+                table_type="error",
+            )
+        # Check if it's an actual OperationTableData instance or has the right attributes
+        if not hasattr(operation_table_data, "headers") or not hasattr(operation_table_data, "rows"):
+            # Fallback for incompatible data structure
+            return TableData(
+                title="Operation Table (Incompatible Data)",
+                headers=["Info"],
+                rows=[["Data structure not compatible with OperationTableData format"]],
+                summary='Expected object with "headers" and "rows" attributes.',
+                table_type="error",
+            )
+
+        # Convert OperationTableData to TabularFormatter's TableData
+        title_with_icon = self._add_operation_icon(operation_table_data.title, operation_table_data.table_type)
+
+        return TableData(
+            title=title_with_icon,
+            headers=operation_table_data.headers,
+            rows=operation_table_data.rows,
+            summary=operation_table_data.summary,
+            table_type=operation_table_data.table_type,
+        )
+
+    def _add_operation_icon(self, title: str, table_type: str) -> str:
+        """Add appropriate icon to operation table title."""
+        icons = {
+            "operation_summary": "📋",
+            "metrics_detail": "📊",
+            "performance_metrics": "⚡",
+            "domain_specific": "🔬",
+        }
+        icon = icons.get(table_type, "📋")
+        return f"{icon} {title}"
+
+    def format_operation_table(self, operation_table_data) -> str:
+        """
+        Format an OperationTableData object as ASCII table.
+
+        This method provides a direct interface for formatting operation tables
+        without going through the pattern matching system.
+
+        Args:
+            operation_table_data: OperationTableData object to format
+
+        Returns:
+            Formatted ASCII table string
+        """
+        if OperationTableData is None:
+            return "OperationTableBuilder not available"
+
+        try:
+            table_data = self._create_operation_table(operation_table_data)
+            return self._format_ascii_table(table_data)
+        except Exception as e:
+            return f"Error formatting operation table: {e}"
+
+    def _create_operation_title(self, title: str, metadata: Optional[Dict[str, Any]] = None) -> str:
+        """Create enhanced title for operation table."""
+        if not metadata:
+            return title
+
+        duration = metadata.get("total_duration")
+        status = metadata.get("status", "UNKNOWN")
+
+        title_line = "=" * 80
+        main_title = f"📋 {title}"
+
+        if duration:
+            duration_str = f"Duration: {duration:.3f}s"
+            main_title += f" ({duration_str})"
+
+        status_line = f"Status: {status}"
+
+        return f"{title_line}\n{main_title}\n{status_line}\n{title_line}"
+
+    def _create_operation_summary(self, summary: Optional[str], metadata: Optional[Dict[str, Any]] = None) -> str:
+        """Create enhanced summary for operation table."""
+        parts = []
+
+        if summary:
+            parts.append(f"📊 {summary}")
+
+        if metadata:
+            operation_count = metadata.get("total_operations")
+            if operation_count:
+                parts.append(f"Operations: {operation_count}")
+
+            available_metrics = metadata.get("available_metrics", set())
+            if available_metrics:
+                metrics_str = ", ".join(sorted(available_metrics))
+                parts.append(f"Metrics: {metrics_str}")
+
+        if not parts:
+            return ""
+
+        return "\n" + " | ".join(parts) + "\n" + "=" * 80
 
     # Extraction helper methods
     def _extract_line_name(self, message: str) -> str:
