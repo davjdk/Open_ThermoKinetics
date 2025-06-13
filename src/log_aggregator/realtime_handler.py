@@ -90,9 +90,7 @@ class AggregatingHandler(logging.Handler):
         # Value aggregator (Stage 4.5)
         value_config = self.config.value_aggregation or ValueAggregationConfig()
         value_config.enabled = enable_value_aggregation
-        self.value_aggregator = ValueAggregator(config=value_config)
-
-        # Processing control
+        self.value_aggregator = ValueAggregator(config=value_config)  # Processing control
         self._processing_lock = threading.RLock()
         self._last_process_time = time.time()
         self._enabled = self.config.enabled
@@ -103,7 +101,13 @@ class AggregatingHandler(logging.Handler):
         self._total_processing_runs = 0
         self._total_processing_time = 0.0
         self._tables_generated = 0
-        self._errors_expanded = 0  # Logger for internal messages
+        self._errors_expanded = 0  # Internal error monitoring (Stage 2)
+        self._internal_error_count = 0
+        self._max_internal_errors = getattr(config, "max_internal_errors", 10)
+        self._error_reset_interval = getattr(config, "error_reset_interval", 300)  # 5 minutes
+        self._last_error_reset = time.time()
+
+        # Logger for internal messages
         self._logger = LoggerManager.get_logger("log_aggregator.realtime_handler")
 
     def emit(self, record: logging.LogRecord) -> None:  # noqa: C901
@@ -116,10 +120,17 @@ class AggregatingHandler(logging.Handler):
         try:
             self._total_records_received += 1
 
+            # Skip internal log_aggregator messages to prevent recursion (Stage 2)
+            if record.name.startswith("log_aggregator"):
+                self._forward_to_target(record)
+                return
+
             # Always forward to target handler if aggregation is disabled
             if not self._enabled:
                 self._forward_to_target(record)
-                return  # Convert to BufferedLogRecord for processing
+                return
+
+            # Convert to BufferedLogRecord for processing
             from datetime import datetime
 
             buffered_record = BufferedLogRecord(
@@ -164,8 +175,16 @@ class AggregatingHandler(logging.Handler):
                 self._forward_to_target(record)
 
         except Exception as e:
-            self._logger.error(f"Error in AggregatingHandler.emit: {e}")
-            # Fallback: forward original record
+            self._handle_internal_error(e)
+            # Improved fallback: safe processing of problematic record
+            try:
+                safe_msg = safe_get_message(record)
+                record.msg = f"[UNFORMATTED] {safe_msg}"
+                record.args = ()
+            except Exception:
+                record.msg = f"[FORMATTING_ERROR] {record.msg}"
+                record.args = ()
+
             self._forward_to_target(record)
 
     def _handle_error_immediately(self, error_record) -> None:
@@ -415,3 +434,29 @@ class AggregatingHandler(logging.Handler):
             self.operation_aggregator.reset_stats()
         if hasattr(self, "value_aggregator"):
             self.value_aggregator.reset_stats()
+
+    def _handle_internal_error(self, error: Exception) -> None:
+        """
+        Handle internal aggregator errors with monitoring and degradation.
+
+        Args:
+            error: Exception that occurred during aggregation
+        """
+        current_time = time.time()
+
+        # Reset error count periodically
+        if current_time - self._last_error_reset > self._error_reset_interval:
+            self._internal_error_count = 0
+            self._last_error_reset = current_time
+
+        self._internal_error_count += 1
+
+        # Log the error
+        self._logger.error(f"Error in AggregatingHandler.emit: {error}")  # Check for degradation threshold
+        if self._internal_error_count > self._max_internal_errors:
+            self._logger.warning(
+                f"Too many internal errors ({self._internal_error_count}). " "Disabling advanced aggregation features."
+            )
+            self.toggle_error_expansion(False)
+            self.toggle_value_aggregation(False)
+            # Keep basic aggregation and tabular formatting active

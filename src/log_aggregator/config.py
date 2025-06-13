@@ -177,9 +177,7 @@ class AggregationConfig:
     """Threshold for compression ratio reporting"""
 
     output_format: str = "enhanced"
-    """Output format: 'simple', 'enhanced', 'tabular'"""
-
-    # Debug and monitoring
+    """Output format: 'simple', 'enhanced', 'tabular'"""  # Debug and monitoring
     enable_stats_logging: bool = True
     """Whether to enable statistics logging"""
 
@@ -188,6 +186,19 @@ class AggregationConfig:
 
     debug_mode: bool = False
     """Whether debug mode is enabled"""
+
+    # Recursion prevention (Stage 2)
+    prevent_internal_recursion: bool = True
+    """Whether to prevent processing of internal aggregator logs"""
+
+    max_internal_errors: int = 10
+    """Maximum number of internal errors before degradation"""
+
+    error_reset_interval: int = 300
+    """Time interval in seconds to reset internal error counter"""
+
+    separate_debug_logging: bool = True
+    """Whether to use separate debug logging for internal aggregator logs"""
 
     # Legacy settings for backward compatibility
     pattern_similarity_threshold: float = 0.8

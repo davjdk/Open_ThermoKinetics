@@ -162,6 +162,10 @@ class LoggerManager:
                 root_logger.info(f"Tabular formatting: {enable_tabular_format}")
                 root_logger.info(f"Operation aggregation: {enable_operation_aggregation}")
                 root_logger.info(f"Value aggregation: {enable_value_aggregation}")
+
+                # Setup separate debug logging for internal aggregator logs (Stage 2)
+                cls._setup_debug_aggregator_logging()
+                root_logger.info("Debug aggregator logging configured")
             except Exception as e:
                 root_logger.error(f"Failed to configure log aggregation: {e}")
                 # Fallback: add non-aggregating console handler
@@ -351,6 +355,39 @@ class LoggerManager:
                     for key, value in val_config.items():
                         if hasattr(handler.config.value_aggregation, key):
                             setattr(handler.config.value_aggregation, key, value)
+
+    @classmethod
+    def _setup_debug_aggregator_logging(cls):
+        """Setup separate debug logging for aggregator internals."""
+        logs_dir = Path("logs")
+        logs_dir.mkdir(exist_ok=True)
+
+        debug_handler = logging.handlers.RotatingFileHandler(
+            logs_dir / "debug_aggregator.log",
+            maxBytes=5 * 1024 * 1024,  # 5MB
+            backupCount=3,
+            encoding="utf-8",
+        )
+        debug_formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
+        debug_handler.setFormatter(debug_formatter)
+
+        # Setup internal loggers with no propagation to prevent recursion
+        internal_loggers = [
+            "log_aggregator.realtime_handler",
+            "log_aggregator.pattern_detector",
+            "log_aggregator.error_expansion",
+            "log_aggregator.value_aggregator",
+            "log_aggregator.operation_aggregator",
+            "log_aggregator.tabular_formatter",
+            "log_aggregator.buffer_manager",
+            "log_aggregator.aggregation_engine",
+        ]
+
+        for logger_name in internal_loggers:
+            logger = logging.getLogger(logger_name)
+            logger.propagate = False  # Prevent recursion
+            logger.addHandler(debug_handler)
+            logger.setLevel(logging.DEBUG)
 
 
 def configure_logger(log_level: int = logging.INFO) -> logging.Logger:
