@@ -5,8 +5,8 @@ This module provides basic configuration settings for the log aggregation
 system, including buffer management and pattern detection parameters.
 """
 
-from dataclasses import dataclass
-from typing import Dict, List, Optional
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Set
 
 
 @dataclass
@@ -41,6 +41,62 @@ class TabularFormattingConfig:
                 "file_operations",
                 "gui_updates",
             ]
+
+
+@dataclass
+class OperationAggregationConfig:
+    """Configuration for operation aggregation."""
+
+    enabled: bool = True
+    """Whether operation aggregation is enabled"""
+
+    cascade_window: float = 1.0
+    """Time window in seconds to group operations into cascades"""
+
+    min_cascade_size: int = 3
+    """Minimum number of operations to consider a cascade"""
+
+    root_operations: Set[str] = field(
+        default_factory=lambda: {
+            "ADD_REACTION",
+            "REMOVE_REACTION",
+            "MODEL_BASED_CALCULATION",
+            "DECONVOLUTION",
+            "MODEL_FIT_CALCULATION",
+            "MODEL_FREE_CALCULATION",
+            "LOAD_FILE",
+            "TO_DTG",
+            "SMOOTH_DATA",
+            "SUBTRACT_BACKGROUND",
+            "GET_DF_DATA",
+            "UPDATE_VALUE",
+            "SET_VALUE",
+        }
+    )
+    """Set of operations that can start a cascade"""
+
+
+@dataclass
+class ValueAggregationConfig:
+    """Configuration for value aggregation."""
+
+    enabled: bool = True
+    """Whether value aggregation is enabled"""
+
+    array_threshold: int = 10
+    """Minimum array size to trigger compression"""
+
+    dataframe_threshold: int = 5
+    """Minimum dataframe size to trigger compression"""
+
+    dict_threshold: int = 8
+    """Minimum dict size to trigger compression"""
+
+    string_threshold: int = 200
+    """Minimum string length to trigger compression"""
+
+    cache_size_limit: int = 100
+    """Maximum number of compressed values to cache"""
 
 
 @dataclass
@@ -117,6 +173,40 @@ class AggregationConfig:
     collect_statistics: bool = True
     """Whether to collect and log aggregation statistics"""
 
+    # Operation aggregation (Stage 4.5)
+    operation_aggregation_enabled: bool = True
+    """Whether operation aggregation is enabled"""
+
+    operation_cascade_window: float = 1.0
+    """Time window in seconds to group operations into cascades"""
+
+    operation_min_cascade_size: int = 3
+    """Minimum number of operations to consider a cascade"""  # Value aggregation (Stage 4.5)
+    value_aggregation_enabled: bool = True
+    """Whether value aggregation is enabled"""
+
+    value_array_threshold: int = 10
+    """Minimum array size to trigger compression"""
+
+    value_dataframe_threshold: int = 5
+    """Minimum dataframe size to trigger compression"""
+
+    value_dict_threshold: int = 8
+    """Minimum dict size to trigger compression"""
+
+    value_string_threshold: int = 200
+    """Minimum string length to trigger compression"""
+
+    value_cache_size_limit: int = 100
+    """Maximum number of compressed values to cache"""
+
+    # Nested configuration objects (Stage 4.5)
+    operation_aggregation: OperationAggregationConfig = None
+    """Configuration object for operation aggregation"""
+
+    value_aggregation: ValueAggregationConfig = None
+    """Configuration object for value aggregation"""
+
     def __post_init__(self):
         """Initialize default values for complex fields."""
         if self.pattern_type_priorities is None:
@@ -141,6 +231,12 @@ class AggregationConfig:
 
         if self.tabular_formatting is None:
             self.tabular_formatting = TabularFormattingConfig()
+
+        if self.operation_aggregation is None:
+            self.operation_aggregation = OperationAggregationConfig()
+
+        if self.value_aggregation is None:
+            self.value_aggregation = ValueAggregationConfig()
 
     @classmethod
     def default(cls) -> "AggregationConfig":

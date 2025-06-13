@@ -16,11 +16,13 @@ except ImportError:
     from core.logger_config import LoggerManager
 
 from .aggregation_engine import AggregationEngine
-from .buffer_manager import BufferManager
+from .buffer_manager import BufferedLogRecord, BufferManager
 from .config import AggregationConfig
 from .error_expansion import ErrorExpansionConfig, ErrorExpansionEngine
+from .operation_aggregator import OperationAggregationConfig, OperationAggregator
 from .pattern_detector import PatternDetector
 from .tabular_formatter import TabularFormatter
+from .value_aggregator import ValueAggregationConfig, ValueAggregator
 
 
 class AggregatingHandler(logging.Handler):
@@ -66,6 +68,27 @@ class AggregatingHandler(logging.Handler):
         self.error_expansion_engine = ErrorExpansionEngine(config=error_config)
         self.enable_error_expansion = error_config.enabled
 
+        # Operation aggregator (Stage 4.5)
+        operation_config = OperationAggregationConfig(
+            enabled=getattr(self.config, "operation_aggregation_enabled", True),
+            cascade_window=getattr(self.config, "operation_cascade_window", 1.0),
+            min_cascade_size=getattr(self.config, "operation_min_cascade_size", 3),
+        )
+        self.operation_aggregator = OperationAggregator(config=operation_config)
+        self.enable_operation_aggregation = operation_config.enabled
+
+        # Value aggregator (Stage 4.5)
+        value_config = ValueAggregationConfig(
+            enabled=getattr(self.config, "value_aggregation_enabled", True),
+            array_threshold=getattr(self.config, "value_array_threshold", 10),
+            dataframe_threshold=getattr(self.config, "value_dataframe_threshold", 5),
+            dict_threshold=getattr(self.config, "value_dict_threshold", 8),
+            string_threshold=getattr(self.config, "value_string_threshold", 200),
+            cache_size_limit=getattr(self.config, "value_cache_size_limit", 100),
+        )
+        self.value_aggregator = ValueAggregator(config=value_config)
+        self.enable_value_aggregation = value_config.enabled
+
         # Processing control
         self._processing_lock = threading.RLock()
         self._last_process_time = time.time()
@@ -77,14 +100,12 @@ class AggregatingHandler(logging.Handler):
         self._total_processing_runs = 0
         self._total_processing_time = 0.0
         self._tables_generated = 0
-        self._errors_expanded = 0
-
-        # Logger for internal messages
+        self._errors_expanded = 0  # Logger for internal messages
         self._logger = LoggerManager.get_logger("log_aggregator.realtime_handler")
 
-    def emit(self, record: logging.LogRecord) -> None:
+    def emit(self, record: logging.LogRecord) -> None:  # noqa: C901
         """
-        Emit a log record.
+        Emit a log record with aggregation support.
 
         Args:
             record: LogRecord to process
@@ -95,7 +116,27 @@ class AggregatingHandler(logging.Handler):
             # Always forward to target handler if aggregation is disabled
             if not self._enabled:
                 self._forward_to_target(record)
-                return
+                return  # Convert to BufferedLogRecord for processing
+            from datetime import datetime
+
+            buffered_record = BufferedLogRecord(
+                record=record, timestamp=datetime.now()
+            )  # Value aggregation (Stage 4.5) - apply to all non-error records
+            if self.enable_value_aggregation and record.levelno < logging.WARNING:
+                processed_message = self.value_aggregator.process_message(buffered_record)
+                # Update the record message with the processed version
+                record.msg = processed_message  # Operation aggregation (Stage 4.5) - detect operation cascades
+            cascade_handled = False
+            if self.enable_operation_aggregation:
+                completed_group = self.operation_aggregator.process_record(buffered_record)
+                if completed_group:
+                    # Emit aggregated operation cascade
+                    aggregated_record = self.operation_aggregator.get_aggregated_record(completed_group)
+                    self._forward_to_target(aggregated_record.record)
+                    return  # Don't forward individual operations
+
+                # Check if this record is part of an ongoing cascade
+                cascade_handled = self.operation_aggregator.current_group is not None
 
             # Add record to buffer
             self.buffer_manager.add_record(record)
@@ -104,16 +145,20 @@ class AggregatingHandler(logging.Handler):
             if self.enable_error_expansion:
                 buffered_record = self.buffer_manager._context_buffer[-1]  # Get the just-added record
                 if self.error_expansion_engine.is_error_record(buffered_record):
+                    # Restore full values for error context
+                    if self.enable_value_aggregation:
+                        full_context = self.value_aggregator.get_full_context(buffered_record)
+                        if full_context:
+                            buffered_record.record.msg = full_context
+
                     self._handle_error_immediately(buffered_record)
                     return  # Don't forward original error, only expanded version
 
             # Check if we should process the buffer
             if self.buffer_manager.should_process():
-                self._process_buffer()
-
-            # For Stage 1, also forward original record to maintain compatibility
-            # In later stages, this might be configurable
-            self._forward_to_target(record)
+                self._process_buffer()  # Forward processed record to target handler only if not part of cascade
+            if not cascade_handled:
+                self._forward_to_target(record)
 
         except Exception as e:
             self._logger.error(f"Error in AggregatingHandler.emit: {e}")
@@ -286,6 +331,16 @@ class AggregatingHandler(logging.Handler):
         else:
             self._logger.info("Error expansion disabled")
 
+    def toggle_operation_aggregation(self, enabled: bool) -> None:
+        """Enable/disable operation aggregation."""
+        self.enable_operation_aggregation = enabled
+        self._logger.info(f"Operation aggregation {'enabled' if enabled else 'disabled'}")
+
+    def toggle_value_aggregation(self, enabled: bool) -> None:
+        """Enable/disable value aggregation."""
+        self.enable_value_aggregation = enabled
+        self._logger.info(f"Value aggregation {'enabled' if enabled else 'disabled'}")
+
     def get_statistics(self) -> Dict[str, Any]:
         """Get comprehensive statistics about aggregation performance."""
         buffer_stats = self.buffer_manager.get_statistics()
@@ -314,6 +369,30 @@ class AggregatingHandler(logging.Handler):
             "error_expansion": error_expansion_stats,
         }
 
+    def get_aggregation_stats(self) -> Dict[str, Any]:
+        """Get statistics from aggregators."""
+        stats = {}
+
+        if self.enable_operation_aggregation:
+            operation_stats = self.operation_aggregator.get_stats()
+            stats.update(
+                {
+                    "operation_cascades_aggregated": operation_stats.get("cascades_detected", 0),
+                    "current_cascade_size": (
+                        self.operation_aggregator.current_group.operation_count
+                        if self.operation_aggregator.current_group
+                        else 0
+                    ),
+                    "operation_compression_ratio": operation_stats.get("compression_ratio", 0.0),
+                }
+            )
+
+        if self.enable_value_aggregation:
+            value_stats = self.value_aggregator.get_stats()
+            stats.update(value_stats)
+
+        return stats
+
     def reset_statistics(self) -> None:
         """Reset all statistics."""
         self._total_records_received = 0
@@ -327,3 +406,9 @@ class AggregatingHandler(logging.Handler):
         self.pattern_detector.clear_patterns()
         self.aggregation_engine.reset_statistics()
         self.error_expansion_engine.reset_statistics()
+
+        # Reset aggregator statistics (Stage 4.5)
+        if hasattr(self, "operation_aggregator"):
+            self.operation_aggregator.reset_stats()
+        if hasattr(self, "value_aggregator"):
+            self.value_aggregator.reset_stats()
