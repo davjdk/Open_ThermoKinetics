@@ -197,11 +197,11 @@ class TestErrorExpansionIntegration:
 
     def test_error_expansion_with_different_thresholds(self):
         """Test error expansion with different log level thresholds."""
-        # Test with ERROR threshold
-        self.config.error_threshold_level = "ERROR"
-        handler_error = AggregatingHandler(target_handler=Mock(), config=self.config)
+        # Test with ERROR threshold - создаем новый конфиг с нужным порогом
+        error_config = AggregationConfig(error_expansion_enabled=True, error_threshold_level="ERROR")
+        handler_error = AggregatingHandler(target_handler=Mock(), config=error_config)
 
-        # WARNING should not be expanded
+        # WARNING should not be expanded because threshold is ERROR
         warning_record = logging.LogRecord(
             name="test_logger",
             level=logging.WARNING,
@@ -215,6 +215,7 @@ class TestErrorExpansionIntegration:
 
         handler_error.emit(warning_record)
         emitted_record = handler_error.target_handler.emit.call_args[0][0]
+        # Поскольку порог ERROR (40), а запись WARNING (30) - расширения не должно быть
         assert "DETAILED ERROR ANALYSIS" not in emitted_record.getMessage()
 
         # ERROR should be expanded

@@ -1,0 +1,185 @@
+name: Logger Stability Tests
+
+on: 
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
+
+jobs:
+  test_logger_stability:
+    runs-on: ubuntu-latest
+    
+    strategy:
+      matrix:
+        python-version: [3.11, 3.12]
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+        installer-parallel: true
+    
+    - name: Load cached venv
+      id: cached-poetry-dependencies
+      uses: actions/cache@v3
+      with:
+        path: .venv
+        key: venv-${{ runner.os }}-${{ matrix.python-version }}-${{ hashFiles('**/poetry.lock') }}
+    
+    - name: Install dependencies
+      if: steps.cached-poetry-dependencies.outputs.cache-hit != 'true'
+      run: poetry install --no-interaction --no-root
+    
+    - name: Install project
+      run: poetry install --no-interaction
+    
+    - name: Install additional test dependencies
+      run: |
+        poetry add --group dev pytest-cov memory-profiler psutil
+    
+    - name: Run basic logger tests
+      run: |
+        poetry run pytest tests/test_log_aggregator/ -v --tb=short
+    
+    - name: Run safe message handling tests
+      run: |
+        poetry run pytest tests/test_log_aggregator/test_safe_message_handling.py -v
+    
+    - name: Run recursion prevention tests
+      run: |
+        poetry run pytest tests/test_log_aggregator/test_recursion_prevention.py -v
+    
+    - name: Run integration stability tests
+      run: |
+        poetry run pytest tests/test_log_aggregator/test_integration_stability.py -v
+    
+    - name: Run performance and memory tests
+      run: |
+        poetry run pytest tests/test_log_aggregator/test_performance_memory.py -v -s
+    
+    - name: Run tests with coverage
+      run: |
+        poetry run pytest tests/test_log_aggregator/ --cov=src.log_aggregator --cov-report=xml --cov-report=html
+    
+    - name: Upload coverage to Codecov
+      uses: codecov/codecov-action@v3
+      with:
+        file: ./coverage.xml
+        flags: unittests
+        name: codecov-umbrella
+        fail_ci_if_error: false
+
+  stress_test:
+    runs-on: ubuntu-latest
+    needs: test_logger_stability
+    
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python 3.11
+      uses: actions/setup-python@v4
+      with:
+        python-version: 3.11
+    
+    - name: Install Poetry
+      uses: snok/install-poetry@v1
+      with:
+        version: latest
+        virtualenvs-create: true
+        virtualenvs-in-project: true
+        installer-parallel: true
+    
+    - name: Install dependencies
+      run: |
+        poetry install --no-interaction
+        poetry add --group dev pytest memory-profiler psutil
+    
+    - name: Run stress tests
+      run: |
+        poetry run python -c "
+        import time
+        import logging
+        from src.core.logger_config import LoggerManager
+        
+        # Configure logging with aggregation
+        LoggerManager.configure_logging(
+            enable_aggregation=True,
+            aggregation_preset='production'
+        )
+        
+        logger = LoggerManager.get_logger('stress_test')
+        
+        # Run stress test
+        start_time = time.time()
+        for i in range(10000):
+            if i % 100 == 0:
+                logger.error('Error message %d with format issues %s', i)
+            else:
+                logger.info(f'Stress test message {i}')
+                
+            if i % 1000 == 0:
+                print(f'Processed {i} messages')
+        
+        end_time = time.time()
+        print(f'Stress test completed in {end_time - start_time:.2f} seconds')
+        
+        # Check health status
+        health = LoggerManager.get_logger_health_status()
+        print(f'System health: {health}')
+        assert health['status'] in ['healthy', 'degraded'], f'System unhealthy: {health}'
+        "
+    
+    - name: Memory leak detection
+      run: |
+        poetry run python -c "
+        import gc
+        import time
+        import psutil
+        from src.core.logger_config import LoggerManager
+        
+        # Get initial memory
+        process = psutil.Process()
+        initial_memory = process.memory_info().rss
+        
+        # Configure logging
+        LoggerManager.configure_logging(
+            enable_aggregation=True,
+            aggregation_preset='development'
+        )
+        
+        # Run multiple cycles
+        for cycle in range(10):
+            logger = LoggerManager.get_logger(f'leak_test_{cycle}')
+            
+            for i in range(1000):
+                logger.info(f'Cycle {cycle} message {i}')
+            
+            del logger
+            
+            if cycle % 3 == 0:
+                gc.collect()
+        
+        # Final cleanup
+        gc.collect()
+        time.sleep(1)
+        
+        # Check memory growth
+        final_memory = process.memory_info().rss
+        memory_growth = final_memory - initial_memory
+        
+        print(f'Memory growth: {memory_growth / 1024 / 1024:.1f} MB')
+        
+        # Assert reasonable memory growth (< 50MB)
+        assert memory_growth < 50 * 1024 * 1024, f'Excessive memory growth: {memory_growth / 1024 / 1024:.1f} MB'
+        "

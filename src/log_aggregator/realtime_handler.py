@@ -38,10 +38,10 @@ class AggregatingHandler(logging.Handler):
         self,
         target_handler: Optional[logging.Handler] = None,
         config: Optional[AggregationConfig] = None,
-        enable_error_expansion: bool = True,
-        enable_tabular_formatting: bool = True,
-        enable_operation_aggregation: bool = True,
-        enable_value_aggregation: bool = True,
+        enable_error_expansion: Optional[bool] = None,
+        enable_tabular_formatting: Optional[bool] = None,
+        enable_operation_aggregation: Optional[bool] = None,
+        enable_value_aggregation: Optional[bool] = None,
     ):
         """
         Initialize aggregating handler.
@@ -59,11 +59,25 @@ class AggregatingHandler(logging.Handler):
         self.config = config or AggregationConfig.default()
         self.target_handler = target_handler
 
-        # Store enable flags
-        self.enable_error_expansion = enable_error_expansion
-        self.enable_tabular_formatting = enable_tabular_formatting
-        self.enable_operation_aggregation = enable_operation_aggregation
-        self.enable_value_aggregation = enable_value_aggregation
+        # Store enable flags - учитываем настройки из config
+        self.enable_error_expansion = (
+            enable_error_expansion if enable_error_expansion is not None else self.config.error_expansion_enabled
+        )
+        self.enable_tabular_formatting = (
+            enable_tabular_formatting
+            if enable_tabular_formatting is not None
+            else getattr(self.config, "tabular_formatting_enabled", True)
+        )
+        self.enable_operation_aggregation = (
+            enable_operation_aggregation
+            if enable_operation_aggregation is not None
+            else getattr(self.config, "operation_aggregation_enabled", True)
+        )
+        self.enable_value_aggregation = (
+            enable_value_aggregation
+            if enable_value_aggregation is not None
+            else getattr(self.config, "value_aggregation_enabled", True)
+        )
 
         # Initialize components
         self.buffer_manager = BufferManager(max_size=self.config.buffer_size, flush_interval=self.config.flush_interval)
@@ -74,23 +88,30 @@ class AggregatingHandler(logging.Handler):
 
         # Tabular formatter (Stage 3)
         tabular_config = self.config.tabular_formatting or TabularFormattingConfig()
-        tabular_config.enabled = enable_tabular_formatting
+        tabular_config.enabled = self.enable_tabular_formatting
         self.tabular_formatter = TabularFormatter(config=tabular_config)
 
         # Error expansion engine (Stage 4)
         error_config = self.config.error_expansion or ErrorExpansionConfig()
-        error_config.enabled = enable_error_expansion
+        error_config.enabled = self.enable_error_expansion
+        # Передаем параметры error expansion из основного конфига
+        error_config.error_threshold_level = self.config.error_threshold_level
+        error_config.context_lines = self.config.error_context_lines
+        error_config.trace_depth = self.config.error_trace_depth
+        error_config.context_time_window = self.config.error_context_time_window
         self.error_expansion_engine = ErrorExpansionEngine(config=error_config)
 
         # Operation aggregator (Stage 4.5)
         operation_config = self.config.operation_aggregation or OperationAggregationConfig()
-        operation_config.enabled = enable_operation_aggregation
+        operation_config.enabled = self.enable_operation_aggregation
         self.operation_aggregator = OperationAggregator(config=operation_config)
 
         # Value aggregator (Stage 4.5)
         value_config = self.config.value_aggregation or ValueAggregationConfig()
-        value_config.enabled = enable_value_aggregation
-        self.value_aggregator = ValueAggregator(config=value_config)  # Processing control
+        value_config.enabled = self.enable_value_aggregation
+        self.value_aggregator = ValueAggregator(config=value_config)
+
+        # Processing control
         self._processing_lock = threading.RLock()
         self._last_process_time = time.time()
         self._enabled = self.config.enabled

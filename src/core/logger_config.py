@@ -28,6 +28,7 @@ class LoggerManager:
         enable_operation_aggregation: bool = True,
         enable_value_aggregation: bool = True,
         aggregation_preset: str = "default",
+        force_reconfigure: bool = False,
     ) -> None:
         """
         Configure application-wide logging with both console and file handlers.
@@ -42,9 +43,15 @@ class LoggerManager:
             backup_count: Number of backup files to keep
             enable_aggregation: Whether to enable log aggregation
             aggregation_config: Configuration dict for log aggregation
+            force_reconfigure: Force reconfiguration even if already configured
         """
-        if cls._configured:
+        if cls._configured and not force_reconfigure:
             return
+
+        # Clear any existing state if reconfiguring
+        if force_reconfigure:
+            cls._aggregating_handlers.clear()
+            cls._configured = False
 
         # Set default levels
         console_level = console_level or log_level
@@ -255,9 +262,8 @@ class LoggerManager:
         """Enable/disable tabular formatting in runtime."""
         for handler in cls._aggregating_handlers:
             if hasattr(handler, "enable_tabular_formatting"):
-                handler.enable_tabular_formatting = enabled
+                handler.enable_tabular_formatting = enabled @ classmethod
 
-    @classmethod
     def toggle_operation_aggregation(cls, enabled: bool) -> None:
         """Enable/disable operation aggregation in runtime."""
         for handler in cls._aggregating_handlers:
@@ -298,10 +304,24 @@ class LoggerManager:
 
             combined_stats["handlers"][f"handler_{i}"] = handler_stats
 
-            # Aggregate totals
-            for key in combined_stats["total_stats"]:
-                if key in handler_stats:
-                    combined_stats["total_stats"][key] += handler_stats[key]
+            # Extract stats from nested structure and aggregate totals
+            if "handler" in handler_stats:
+                h_stats = handler_stats["handler"]
+                combined_stats["total_stats"]["total_records"] += h_stats.get("total_records_received", 0)
+                combined_stats["total_stats"]["errors_expanded"] += h_stats.get("errors_expanded", 0)
+                combined_stats["total_stats"]["tables_generated"] += h_stats.get("tables_generated", 0)
+
+            if "patterns" in handler_stats:
+                p_stats = handler_stats["patterns"]
+                combined_stats["total_stats"]["patterns_detected"] += p_stats.get("total_patterns", 0)
+
+            if "aggregation" in handler_stats:
+                a_stats = handler_stats["aggregation"]
+                combined_stats["total_stats"]["aggregated_records"] += a_stats.get("total_aggregations", 0)
+
+            if "buffer" in handler_stats:
+                b_stats = handler_stats["buffer"]
+                combined_stats["total_stats"]["buffer_flushes"] += b_stats.get("flush_count", 0)
 
         # Calculate derived metrics
         total_processed = combined_stats["total_stats"]["total_records"]
@@ -388,6 +408,56 @@ class LoggerManager:
             logger.propagate = False  # Prevent recursion
             logger.addHandler(debug_handler)
             logger.setLevel(logging.DEBUG)
+
+    @classmethod
+    def get_logger_health_status(cls) -> dict:
+        """Get current logger health status."""
+        try:
+            # Check basic logging functionality
+            test_logger = logging.getLogger("health_check")
+            test_logger.debug("Health check test message")
+
+            # Get aggregation statistics
+            stats = cls.get_aggregation_stats()
+            total_stats = stats.get("total_stats", {})
+
+            # Determine health status based on statistics and errors
+            error_rate = 0
+            total_records = total_stats.get("total_records", 0)
+            if total_records > 0:
+                # Calculate approximate error rate (we don't have exact error counts)
+                errors_expanded = total_stats.get("errors_expanded", 0)
+                error_rate = errors_expanded / total_records
+
+            # Determine status
+            if error_rate > 0.5:  # More than 50% errors
+                status = "degraded"
+            else:
+                status = "healthy"  # Check if aggregating handlers are responsive
+            healthy_handlers = [h for h in cls._aggregating_handlers if hasattr(h, "config")]
+            handlers_healthy = len(cls._aggregating_handlers) == len(healthy_handlers)
+
+            if not handlers_healthy:
+                status = "degraded"
+
+            return {
+                "status": status,
+                "total_records": total_records,
+                "error_rate": error_rate,
+                "handlers_count": len(cls._aggregating_handlers),
+                "handlers_healthy": handlers_healthy,
+                "stats": total_stats,
+            }
+        except Exception as e:
+            # If we can't even check health, system is degraded
+            return {
+                "status": "degraded",
+                "error": str(e),
+                "total_records": 0,
+                "error_rate": 1.0,
+                "handlers_count": 0,
+                "handlers_healthy": False,
+            }
 
 
 def configure_logger(log_level: int = logging.INFO) -> logging.Logger:

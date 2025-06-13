@@ -55,7 +55,8 @@ def safe_extract_args(record: logging.LogRecord) -> tuple:
         Args tuple or empty tuple if not available
     """
     try:
-        return getattr(record, "args", ())
+        args = getattr(record, "args", ())
+        return args if args is not None else ()
     except Exception:
         return ()
 

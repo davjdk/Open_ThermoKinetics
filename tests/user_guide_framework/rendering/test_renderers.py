@@ -8,10 +8,10 @@ from pathlib import Path
 import pytest
 from PyQt6.QtWidgets import QApplication, QWidget
 
-from src.gui.user_guide_framework.core.theme_manager import ThemeManager
-from src.gui.user_guide_framework.rendering.renderers.code_renderer import CodeRenderer
-from src.gui.user_guide_framework.rendering.renderers.list_renderer import ListRenderer
-from src.gui.user_guide_framework.rendering.renderers.text_renderer import TextRenderer
+from src.gui.user_guide_tab.user_guide_framework.core.theme_manager import ThemeManager
+from src.gui.user_guide_tab.user_guide_framework.rendering.renderers.code_renderer import CodeRenderer
+from src.gui.user_guide_tab.user_guide_framework.rendering.renderers.list_renderer import ListRenderer
+from src.gui.user_guide_tab.user_guide_framework.rendering.renderers.text_renderer import TextRenderer
 
 
 @pytest.fixture
