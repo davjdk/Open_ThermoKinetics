@@ -10,6 +10,7 @@ from src.core.logger_config import logger
 from src.core.logger_console import LoggerConsole as console
 from src.gui.main_tab.main_tab import MainTab
 from src.gui.user_guide_tab.user_guide_tab import UserGuideTab
+from src.log_aggregator.operation_logger import operation, operation_logger
 
 
 class MainWindow(QMainWindow):
@@ -146,12 +147,15 @@ class MainWindow(QMainWindow):
     def _handle_calculation_finished(self, params: dict):
         """Handle CALCULATION_FINISHED operation"""
         self.main_tab.sub_sidebar.deconvolution_sub_bar.calc_buttons.revert_to_default()
-        return True
+        return True @ operation("MODEL_FREE_CALCULATION")
 
     def _handle_model_free_calculation(self, params: dict):
         series_name = params.get("series_name")
+        operation_logger.add_metric("series_name", series_name)
+
         if not series_name:
             console.log("\nIt is necessary to select a series for calculation\n")
+            operation_logger.add_metric("error", "no_series_selected")
             return
 
         series_entry = self.handle_request_cycle(
@@ -159,15 +163,24 @@ class MainWindow(QMainWindow):
         )
         experimental_df = series_entry.get("experimental_data")
         deconvolution_results = series_entry.get("deconvolution_results", {})
+
+        operation_logger.add_metric("has_experimental_data", experimental_df is not None)
+        operation_logger.add_metric("has_deconvolution_results", bool(deconvolution_results))
+
         if not deconvolution_results:
             console.log(
                 f"\nSeries '{series_name}' should be divided into reactions by deconvolution.\n"
                 "Load deconvolution data in series working space.\n"
             )
+            operation_logger.add_metric("error", "no_deconvolution_results")
             return
+
         reactions, _ = self.main_tab.sub_sidebar.series_sub_bar.check_missing_reactions(
             experimental_df, deconvolution_results
         )
+        operation_logger.add_metric("reactions_count", len(reactions))
+        operation_logger.add_metric("calculation_method", params.get("fit_method", "unknown"))
+
         params["reaction_data"] = {
             reaction: self.main_tab.sub_sidebar.series_sub_bar.get_reaction_dataframe(
                 experimental_df, deconvolution_results, reaction_n=reaction
@@ -179,7 +192,12 @@ class MainWindow(QMainWindow):
         )
         if not fit_results:
             console.log("\nThere are not enough beta columns for model free calculation.\n")
+            operation_logger.add_metric("error", "insufficient_data")
             return
+
+        operation_logger.add_metric("calculation_successful", True)
+        operation_logger.add_metric("results_count", len(fit_results) if fit_results else 0)
+
         update_data = {"model_free_results": {params["fit_method"]: fit_results}}
         self.handle_request_cycle(
             "series_data", OperationType.UPDATE_SERIES, series_name=series_name, update_data=update_data
@@ -278,10 +296,15 @@ class MainWindow(QMainWindow):
             return
         self.main_tab.sub_sidebar.model_fit_sub_bar.update_results_table(result_df)
 
+    @operation("MODEL_FIT_CALCULATION")
     def _handle_model_fit_calculation(self, params: dict):
         series_name = params.get("series_name")
+        operation_logger.add_metric("series_name", series_name)
+        operation_logger.add_metric("fit_method", params.get("fit_method", "unknown"))
+
         if not series_name:
             console.log("\nIt is necessary to select a series for calculation\n")
+            operation_logger.add_metric("error", "no_series_selected")
             return
 
         series_entry = self.handle_request_cycle(
@@ -289,16 +312,23 @@ class MainWindow(QMainWindow):
         )
         experimental_df = series_entry.get("experimental_data")
         deconvolution_results = series_entry.get("deconvolution_results", {})
+
+        operation_logger.add_metric("has_experimental_data", experimental_df is not None)
+        operation_logger.add_metric("has_deconvolution_results", bool(deconvolution_results))
+
         if not deconvolution_results:
             console.log(
                 f"\nSeries '{series_name}' should be divided into reactions by deconvolution.\n"
                 "Load deconvolution data in series working space.\n"
             )
+            operation_logger.add_metric("error", "no_deconvolution_results")
             return
 
         reactions, _ = self.main_tab.sub_sidebar.series_sub_bar.check_missing_reactions(
             experimental_df, deconvolution_results
         )
+        operation_logger.add_metric("reactions_analyzed", len(reactions))
+
         params["reaction_data"] = {
             reaction: self.main_tab.sub_sidebar.series_sub_bar.get_reaction_dataframe(
                 experimental_df, deconvolution_results, reaction_n=reaction
@@ -308,19 +338,29 @@ class MainWindow(QMainWindow):
         fit_results = self.handle_request_cycle(
             "model_fit_calculation", OperationType.MODEL_FIT_CALCULATION, calculation_params=params
         )
+
+        operation_logger.add_metric("calculation_successful", fit_results is not None)
+        operation_logger.add_metric("results_count", len(fit_results) if fit_results else 0)
+
         update_data = {"model_fit_results": {params["fit_method"]: fit_results}}
         self.handle_request_cycle(
             "series_data", OperationType.UPDATE_SERIES, series_name=series_name, update_data=update_data
         )
-        self.main_tab.sub_sidebar.model_fit_sub_bar.update_fit_results(fit_results)
+        self.main_tab.sub_sidebar.model_fit_sub_bar.update_fit_results(fit_results) @ operation(
+            "LOAD_DECONVOLUTION_RESULTS"
+        )
 
     def _handle_load_deconvolution_results(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
             logger.error("No series_name provided for deconvolution results.")
+            operation_logger.add_metric("error", "missing_series_name")
             return
 
         deconvolution_results = params.get("deconvolution_results", {})
+        operation_logger.add_metric("series_name", series_name)
+        operation_logger.add_metric("results_count", len(deconvolution_results))
+
         update_data = {"deconvolution_results": deconvolution_results}
         is_ok = self.handle_request_cycle(
             "series_data",
@@ -330,79 +370,117 @@ class MainWindow(QMainWindow):
         )
         if not is_ok:
             logger.error(f"Failed to update deconvolution results for series '{series_name}'.")
-        self._handle_select_series(params)
+            operation_logger.add_metric("update_failed", True)
+        else:
+            operation_logger.add_metric("update_successful", True)
+
+        self._handle_select_series(params) @ operation("SELECT_SERIES")
 
     def _handle_select_series(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
             logger.error("No series_name provided for SELECT_SERIES")
+            operation_logger.add_metric("error", "missing_series_name")
             return
+
+        operation_logger.add_metric("series_name", series_name)
 
         series_entry = self.handle_request_cycle(
             "series_data", OperationType.GET_SERIES, series_name=series_name, info_type="all"
         )
         if not series_entry:
             logger.warning(f"Couldn't get data for the series '{series_name}'")
+            operation_logger.add_metric("series_load_failed", True)
             return
+
+        operation_logger.add_metric("series_loaded_successfully", True)
 
         reaction_scheme = series_entry.get("reaction_scheme")
         calculation_settings = series_entry.get("calculation_settings")
         series_df = series_entry.get("experimental_data")
         deconvolution_results = series_entry.get("deconvolution_results", {})
+
+        operation_logger.add_metric("has_reaction_scheme", reaction_scheme is not None)
+        operation_logger.add_metric("has_deconvolution_results", len(deconvolution_results) > 0)
+        operation_logger.add_metric("series_data_points", len(series_df) if series_df is not None else 0)
+
         if not reaction_scheme:
             logger.warning(f"Couldn't get a scheme for the series '{series_name}'")
+            operation_logger.add_metric("scheme_missing", True)
             return
 
         if deconvolution_results == {}:
             self.main_tab.plot_canvas.plot_data_from_dataframe(series_df)
         else:
             reaction_n = params.get("reaction_n", "reaction_0")
+            operation_logger.add_metric("reaction_selected", reaction_n)
             reaction_df = self.main_tab.sub_sidebar.series_sub_bar.get_reaction_dataframe(
                 series_df, deconvolution_results, reaction_n
             )
             self.main_tab.plot_canvas.plot_data_from_dataframe(reaction_df)
         self.main_tab.sub_sidebar.model_based.update_scheme_data(reaction_scheme)
         self.main_tab.sub_sidebar.model_based.update_calculation_settings(calculation_settings)
-        self.main_tab.sub_sidebar.series_sub_bar.update_series_ui(series_df, deconvolution_results)
+        self.main_tab.sub_sidebar.series_sub_bar.update_series_ui(series_df, deconvolution_results) @ operation(
+            "MODEL_PARAMS_CHANGE"
+        )
 
     def _handle_model_params_change(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
             logger.error("No series_name provided for MODEL_PARAMS_CHANGE")
+            operation_logger.add_metric("error", "missing_series_name")
             return
+
+        operation_logger.add_metric("series_name", series_name)
+        operation_logger.add_metric("is_calculate", params.get("is_calculate", False))
+        operation_logger.add_metric("params_keys", list(params.keys()))
 
         is_ok = self.handle_request_cycle("series_data", OperationType.SCHEME_CHANGE, **params)
         if not is_ok:
             logger.error("Failed to update scheme in series_data for MODEL_PARAMS_CHANGE")
+            operation_logger.add_metric("scheme_update_failed", True)
             return
+
+        operation_logger.add_metric("scheme_update_successful", True)
 
         series_entry = self.handle_request_cycle(
             "series_data", OperationType.GET_SERIES, series_name=series_name, info_type="all"
         )
         if not series_entry["reaction_scheme"]:
             logger.warning(f"Не удалось получить схему серии '{series_name}' после обновления.")
+            operation_logger.add_metric("scheme_retrieval_failed", True)
             return
 
         self.main_tab.sub_sidebar.model_based.update_scheme_data(series_entry["reaction_scheme"])
         self.main_tab.sub_sidebar.model_based.update_calculation_settings(series_entry["calculation_settings"])
         if params.get("is_calculate"):
+            operation_logger.add_metric("model_simulation_triggered", True)
             self.update_model_simulation(series_name)
 
+    @operation("SCHEME_CHANGE")
     def _handle_scheme_change(self, params: dict):
+        operation_logger.add_metric("params_keys", list(params.keys()))
+
         is_ok = self.handle_request_cycle("series_data", OperationType.SCHEME_CHANGE, **params)
         if not is_ok:
             logger.error("Failed to update scheme in series_data")
+            operation_logger.add_metric("scheme_update_failed", True)
 
         series_name = params.get("series_name")
         if not series_name:
             logger.error("No series_name provided for SCHEME_CHANGE")
+            operation_logger.add_metric("error", "missing_series_name")
             return
+
+        operation_logger.add_metric("series_name", series_name)
+        operation_logger.add_metric("scheme_update_successful", True)
 
         scheme_data = self.handle_request_cycle(
             "series_data", OperationType.GET_SERIES, series_name=series_name, info_type="scheme"
         )
         if not scheme_data:
             logger.warning(f"Не удалось получить схему для серии '{series_name}'")
+            operation_logger.add_metric("scheme_retrieval_failed", True)
             return
 
         self.main_tab.sub_sidebar.model_based.update_scheme_data(scheme_data)
@@ -462,21 +540,37 @@ class MainWindow(QMainWindow):
         suggested_file_name = params["function"](params["file_name"], data)
         self.main_tab.sub_sidebar.deconvolution_sub_bar.file_transfer_buttons.export_reactions(
             data, suggested_file_name
-        )
+        ) @ operation("DECONVOLUTION") @ operation("DECONVOLUTION")
 
     def _handle_deconvolution(self, params):
+        operation_logger.add_metric("operation_type", "deconvolution")
+        operation_logger.add_metric("params_count", len(params))
+
         data = self.handle_request_cycle("calculations_data_operations", OperationType.DECONVOLUTION, **params)
         logger.debug(f"{data=}")
+
+        operation_logger.add_metric("deconvolution_successful", data is not None)
 
     def _handle_stop_calculation(self, params):
         _ = self.handle_request_cycle("calculations", OperationType.STOP_CALCULATION)
 
+    @operation("ADD_NEW_SERIES")
     def _handle_add_new_series(self, params):
+        # Add operation metrics
+        operation_logger.add_metric("request_type", "add_new_series")
+
         df_copies = self.handle_request_cycle("file_data", OperationType.GET_ALL_DATA, file_name="all_files")
         series_name, selected_files = self.main_tab.sidebar.open_add_series_dialog(df_copies)
         if not series_name or not selected_files:
             logger.warning(f"{self.actor_name} user canceled or gave invalid input for new series.")
+            operation_logger.add_metric("operation_cancelled", True)
             return
+
+        # Add metrics about the series being created
+        operation_logger.add_metric("series_name", series_name)
+        operation_logger.add_metric("files_count", len(selected_files))
+        operation_logger.add_metric("heating_rates", [rate for _, rate, _ in selected_files])
+        operation_logger.add_metric("experimental_masses", [mass for _, _, mass in selected_files])
 
         df_with_rates = {}
         experimental_masses = []
@@ -516,6 +610,8 @@ class MainWindow(QMainWindow):
         )
 
         if is_ok:
+            operation_logger.add_metric("series_created", True)
+            operation_logger.add_metric("data_points", len(merged_df))
             self.main_tab.sidebar.add_series(series_name)
             series_entry = self.handle_request_cycle(
                 "series_data", OperationType.GET_SERIES, series_name=series_name, info_type="all"

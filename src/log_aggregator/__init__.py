@@ -6,6 +6,7 @@ __author__ = "Solid State Kinetics Team"
 
 from .config import AggregationConfig, TabularFormattingConfig
 from .error_expansion import ErrorContext, ErrorExpansionConfig, ErrorExpansionEngine
+from .operation_logger import OperationContext, OperationLogger, log_operation, operation, operation_logger
 from .realtime_handler import AggregatingHandler
 from .tabular_formatter import TableData, TabularFormatter
 
@@ -18,4 +19,9 @@ __all__ = [
     "ErrorExpansionEngine",
     "ErrorExpansionConfig",
     "ErrorContext",
+    "OperationContext",
+    "OperationLogger",
+    "log_operation",
+    "operation",
+    "operation_logger",
 ]
