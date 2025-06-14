@@ -40,6 +40,7 @@ except ImportError:
 try:
     from .config import OperationAggregationConfig, TabularFormattingConfig
     from .operation_aggregator import OperationAggregator
+    from .operation_error_handler import DefaultOperationErrorHandler, OperationErrorHandler
     from .tabular_formatter import TabularFormatter
 except ImportError:
     # Handle case where components are not available
@@ -47,6 +48,8 @@ except ImportError:
     TabularFormatter = None
     TabularFormattingConfig = None
     OperationAggregationConfig = None
+    OperationErrorHandler = None
+    DefaultOperationErrorHandler = None
 
 
 @dataclass
@@ -117,6 +120,7 @@ class OperationLogger:
         compression_config: Optional[DataCompressionConfig] = None,
         operation_monitor: Optional["OperationMonitor"] = None,
         enable_tables: bool = True,
+        error_handlers: Optional[List] = None,
     ):
         """
         Initialize the operation logger.
@@ -127,12 +131,26 @@ class OperationLogger:
             compression_config: Configuration for data compression
             operation_monitor: Optional OperationMonitor for enhanced tracking
             enable_tables: Whether to enable automatic ASCII table generation
+            error_handlers: List of error handlers to register for error processing
         """
         self.logger = logging.getLogger(logger_name)
         self.compression_config = compression_config or DataCompressionConfig()
         self.operation_monitor = operation_monitor
         self.enable_tables = enable_tables
-        self._local = threading.local()  # Initialize tabular formatter if available and enabled
+        self._local = threading.local()
+
+        # Initialize error handlers
+        self._error_handlers: List = []
+        self._default_error_handler = None
+        if DefaultOperationErrorHandler:
+            self._default_error_handler = DefaultOperationErrorHandler()
+
+        # Register custom error handlers
+        if error_handlers:
+            for handler in error_handlers:
+                self.register_error_handler(handler)
+
+        # Initialize tabular formatter if available and enabled
         self.tabular_formatter = None
         if enable_tables and TabularFormatter:
             try:
@@ -581,6 +599,71 @@ class OperationLogger:
             except Exception as e:
                 self.logger.warning(f"Error resetting operation monitor: {e}")
 
+    def register_error_handler(self, handler) -> None:
+        """
+        Register an error handler for operation error processing.
+
+        Args:
+            handler: OperationErrorHandler instance to register
+        """
+        if handler and handler not in self._error_handlers:
+            self._error_handlers.append(handler)
+            self.logger.debug(f"Registered error handler: {handler.get_handler_name()}")
+
+    def unregister_error_handler(self, handler) -> None:
+        """
+        Unregister an error handler.
+
+        Args:
+            handler: OperationErrorHandler instance to unregister
+        """
+        if handler in self._error_handlers:
+            self._error_handlers.remove(handler)
+            self.logger.debug(f"Unregistered error handler: {handler.get_handler_name()}")
+
+    def _handle_operation_error(self, error: Exception, operation_context: OperationContext) -> None:
+        """
+        Handle an error that occurred during operation through registered handlers.
+
+        Args:
+            error: The exception that occurred
+            operation_context: Full context of the operation when error occurred
+        """
+        # Try each registered error handler
+        for handler in self._error_handlers:
+            try:
+                result = handler.handle_operation_error(error, operation_context)
+                if result and result.get("handled"):
+                    self.logger.debug(f"Error handled by {handler.get_handler_name()}")
+
+                    # Add error handling results to operation metrics
+                    if operation_context.metrics is not None:
+                        operation_context.metrics.update(
+                            {
+                                "error_handler": result.get("handler"),
+                                "recovery_attempted": result.get("recovery_attempted", False),
+                                "recovery_success": result.get("recovery_success", False),
+                            }
+                        )
+
+                    # If recovery was successful, update operation status
+                    if result.get("recovery_success"):
+                        operation_context.status = "RECOVERED"
+                        self.logger.info(f"✅ Operation {operation_context.operation_name} recovered from error")
+
+                    break  # Stop after first successful handler
+
+            except Exception as handler_error:
+                # Log error in handler but continue with other handlers
+                self.logger.warning(f"Error in error handler {handler.get_handler_name()}: {handler_error}")
+
+        # Always use default handler as fallback
+        if self._default_error_handler:
+            try:
+                self._default_error_handler.handle_operation_error(error, operation_context)
+            except Exception as default_handler_error:
+                self.logger.error(f"Error in default error handler: {default_handler_error}")
+
     def _generate_operation_id(self, operation_name: str) -> str:
         """Generate unique operation ID."""
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -646,8 +729,19 @@ class _OperationContextManager:
         status = "ERROR" if exc_type is not None else "SUCCESS"
         error_info = None
 
-        # Collect exception details if occurred
-        if exc_type is not None:
+        # Handle error through registered error handlers if exception occurred
+        if exc_type is not None and exc_val is not None:
+            # Get current operation context for error handlers
+            current_context = self.operation_logger.get_current_operation()
+            if current_context:
+                # Call error handlers
+                try:
+                    self.operation_logger._handle_operation_error(exc_val, current_context)
+                except Exception as handler_error:
+                    # Log handler errors but don't fail the operation
+                    self.operation_logger.logger.warning(f"Error handler failed: {handler_error}")
+
+            # Collect exception details for operation end
             error_info = {
                 "type": exc_type.__name__,
                 "message": str(exc_val),
