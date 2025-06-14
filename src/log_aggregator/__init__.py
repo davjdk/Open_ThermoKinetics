@@ -10,13 +10,12 @@ from .operation_decorator import operation as enhanced_operation
 from .operation_logger import OperationContext, OperationLogger, log_operation, operation, operation_logger
 from .operation_metaclass import AutoOperationMeta, OperationAwareMixin, operation_aware_class
 from .realtime_handler import AggregatingHandler
-from .tabular_formatter import TableData, TabularFormatter
+from .tabular_formatter import TabularFormatter
 
 __all__ = [
     "AggregationConfig",
     "TabularFormattingConfig",
     "TabularFormatter",
-    "TableData",
     "AggregatingHandler",
     "ErrorExpansionEngine",
     "ErrorExpansionConfig",

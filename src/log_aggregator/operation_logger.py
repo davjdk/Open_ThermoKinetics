@@ -340,55 +340,47 @@ class OperationLogger:
     def _create_operation_table_data(self, context: OperationContext) -> Optional[Dict[str, Any]]:
         """Create table data structure for operation context."""
         try:
-            # Import TableData if available
-            from .tabular_formatter import TableData
-
-            # Prepare table headers and data
-            headers = ["Metric", "Value"]
-            rows = [
-                ["Operation", context.operation_name],
-                ["Status", context.status],
-                ["Duration (s)", f"{context.duration:.3f}" if context.duration else "N/A"],
-                ["Sub-operations", str(context.sub_operations_count)],
-                ["Files Modified", str(context.files_modified)],
+            # Prepare table data as a dictionary for TabularFormatter
+            data_rows = [
+                {"Metric": "Operation", "Value": context.operation_name},
+                {"Metric": "Status", "Value": context.status},
+                {"Metric": "Duration (s)", "Value": f"{context.duration:.3f}" if context.duration else "N/A"},
+                {"Metric": "Sub-operations", "Value": str(context.sub_operations_count)},
+                {"Metric": "Files Modified", "Value": str(context.files_modified)},
             ]
 
             # Add custom metrics
             for key, value in context.metrics.items():
                 display_value = self._get_display_value(value)
-                rows.append([f"  {key}", display_value])
+                data_rows.append({"Metric": f"  {key}", "Value": display_value})
 
             # Add error information if present
             if context.error_info:
-                rows.append(["Error Type", context.error_info.get("type", "Unknown")])
-                rows.append(["Error Message", context.error_info.get("message", "Unknown")])
+                data_rows.append({"Metric": "Error Type", "Value": context.error_info.get("type", "Unknown")})
+                data_rows.append({"Metric": "Error Message", "Value": context.error_info.get("message", "Unknown")})
 
             # Create table data object
             status_emoji = "✅" if context.status == "SUCCESS" else "❌"
             title = f"{status_emoji} Operation Summary: {context.operation_name}"
 
-            return TableData(
-                title=title,
-                headers=headers,
-                rows=rows,
-                summary=f"Completed at {context.end_time.strftime('%H:%M:%S')}" if context.end_time else None,
-                table_type="operation_summary",
-            )
+            return {
+                "title": title,
+                "data": data_rows,
+                "summary": f"Completed at {context.end_time.strftime('%H:%M:%S')}" if context.end_time else None,
+                "table_type": "operation_summary",
+            }
 
-        except ImportError:
-            # Fallback to simple dict if TableData not available
+        except Exception as e:
+            # Fallback to simple dict if there's any error
+            self.logger.debug(f"Error creating table data: {e}")
             return {
                 "title": f"Operation Summary: {context.operation_name}",
-                "headers": ["Metric", "Value"],
-                "rows": [
-                    ["Status", context.status],
-                    ["Duration", f"{context.duration:.3f}s" if context.duration else "N/A"],
+                "data": [
+                    {"Metric": "Status", "Value": context.status},
+                    {"Metric": "Duration", "Value": f"{context.duration:.3f}s" if context.duration else "N/A"},
                 ],
                 "table_type": "operation_summary",
             }
-        except Exception as e:
-            self.logger.debug(f"Error creating table data: {e}")
-            return None
 
     def _compress_value(self, value: Any) -> Any:
         """

@@ -44,6 +44,38 @@ Data preparation
 
 </div>
 
+## Features
+
+### Advanced Tabular Output with Rich
+Open ThermoKinetics uses the **Rich** library for beautiful, professional console output formatting:
+
+- **Styled Tables**: Multiple table styles (default, minimal, fancy, grid) for different presentation needs
+- **Rich Console Output**: Color-coded tables with proper borders and alignment
+- **Fallback Support**: Automatic ASCII table fallback when Rich is not available
+- **Export-Ready**: Professional formatting suitable for reports and documentation
+
+**Example Usage:**
+```python
+from src.log_aggregator.tabular_formatter import TabularFormatter
+
+# Create formatter with Rich styling
+formatter = TabularFormatter(style="fancy")
+
+# Format operation results
+results = [
+    {"Operation": "load_file", "Duration": 0.234, "Status": "Success"},
+    {"Operation": "process_data", "Duration": 1.567, "Status": "Success"}
+]
+
+# Generate beautiful table
+table_output = formatter.format_operation_results(
+    results=results, 
+    title="Operation Results",
+    style_override="grid"
+)
+print(table_output)
+```
+
 ## Getting Started
 To start using Open ThermoKinetics, follow these steps to install the software from the latest release:
 

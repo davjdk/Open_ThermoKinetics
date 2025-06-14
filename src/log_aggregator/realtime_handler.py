@@ -15,12 +15,10 @@ try:
 except ImportError:
     from core.logger_config import LoggerManager
 
-from .aggregation_engine import AggregationEngine
 from .buffer_manager import BufferedLogRecord, BufferManager
 from .config import AggregationConfig, TabularFormattingConfig
 from .error_expansion import ErrorExpansionConfig, ErrorExpansionEngine
 from .operation_aggregator import OperationAggregationConfig, OperationAggregator
-from .pattern_detector import PatternDetector
 from .safe_message_utils import safe_get_message
 from .tabular_formatter import TabularFormatter
 
@@ -69,14 +67,8 @@ class AggregatingHandler(logging.Handler):
             enable_operation_aggregation
             if enable_operation_aggregation is not None
             else getattr(self.config, "operation_aggregation_enabled", True)
-        )
-
-        # Initialize components
+        )  # Initialize components
         self.buffer_manager = BufferManager(max_size=self.config.buffer_size, flush_interval=self.config.flush_interval)
-
-        self.pattern_detector = PatternDetector(similarity_threshold=self.config.pattern_similarity_threshold)
-
-        self.aggregation_engine = AggregationEngine(min_pattern_entries=self.config.min_pattern_entries)
 
         # Tabular formatter (Stage 3)
         tabular_config = self.config.tabular_formatting or TabularFormattingConfig()
@@ -204,8 +196,7 @@ class AggregatingHandler(logging.Handler):
             self._logger.debug(f"Expanded error: {safe_get_message(error_record.record)[:100]}")
 
         except Exception as e:
-            self._logger.error(f"Error in immediate error expansion: {e}")
-            # Fallback: forward original record
+            self._logger.error(f"Error in immediate error expansion: {e}")  # Fallback: forward original record
             self._forward_to_target(error_record.record)
 
     def _process_buffer(self) -> None:
@@ -219,21 +210,11 @@ class AggregatingHandler(logging.Handler):
                 if not records:
                     return
 
-                # Detect patterns
-                patterns = self.pattern_detector.detect_patterns(records)
-
-                # Create aggregated records
-                aggregated_records = self.aggregation_engine.process_records(records, patterns)
-
-                # Tabular formatting (Stage 3)
-                if self.enable_tabular_formatting and patterns:
-                    table_records = self.tabular_formatter.format_patterns_as_tables(patterns)
-                    aggregated_records.extend(table_records)
-                    self._tables_generated += len(table_records)
-
-                # Emit aggregated summaries
-                for aggregated in aggregated_records:
-                    self._emit_aggregated_record(aggregated)
+                # Since pattern detection and aggregation engine are removed,
+                # we'll just forward the records individually
+                # This maintains backward compatibility while removing legacy code
+                for record in records:
+                    self._forward_to_target(record.record)
 
                 # Update statistics
                 self._total_processing_runs += 1
@@ -242,7 +223,10 @@ class AggregatingHandler(logging.Handler):
 
                 if self.config.collect_statistics:
                     self._log_processing_statistics(
-                        len(records), len(patterns), len(aggregated_records), processing_time
+                        len(records),
+                        0,
+                        len(records),
+                        processing_time,  # 0 patterns, records count as aggregated
                     )
             except Exception as e:
                 self._logger.error(f"Error processing buffer: {e}")
@@ -380,8 +364,6 @@ class AggregatingHandler(logging.Handler):
     def get_statistics(self) -> Dict[str, Any]:
         """Get comprehensive statistics about aggregation performance."""
         buffer_stats = self.buffer_manager.get_statistics()
-        pattern_stats = self.pattern_detector.get_pattern_statistics()
-        aggregation_stats = self.aggregation_engine.get_statistics()
         error_expansion_stats = self.error_expansion_engine.get_statistics()
 
         return {
@@ -400,8 +382,6 @@ class AggregatingHandler(logging.Handler):
                 "error_expansion_enabled": self.enable_error_expansion,
             },
             "buffer": buffer_stats,
-            "patterns": pattern_stats,
-            "aggregation": aggregation_stats,
             "error_expansion": error_expansion_stats,
         }
 
@@ -435,9 +415,9 @@ class AggregatingHandler(logging.Handler):
         self._errors_expanded = 0
 
         self.buffer_manager.reset_statistics()
-        self.pattern_detector.clear_patterns()
-        self.aggregation_engine.reset_statistics()
-        self.error_expansion_engine.reset_statistics()  # Reset aggregator statistics (Stage 4.5)
+        self.error_expansion_engine.reset_statistics()
+
+        # Reset aggregator statistics (Stage 4.5)
         if hasattr(self, "operation_aggregator"):
             self.operation_aggregator.reset_stats()
 
