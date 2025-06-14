@@ -282,6 +282,20 @@ class OperationMonitor:
         if self.config.enabled:
             self._start_monitoring_thread()
 
+    def reset(self) -> None:
+        """Reset the operation monitor to clean state."""
+        with self._lock:
+            self._active_operations.clear()
+            self._operation_history.clear()
+            self._operations_by_type.clear()
+            self._active_flows.clear()
+            self._flow_history.clear()
+            self._operation_to_flow.clear()
+            self._operation_stats.clear()
+            self.current_operation = None
+            self.completed_operations.clear()
+            self.operation_stack.clear()
+
     def start_operation(
         self,
         operation_id: str,
@@ -710,3 +724,7 @@ class OperationMonitor:
         with self._lock:
             for op_id in list(self._active_operations.keys()):
                 self.complete_operation(op_id, OperationStatus.FAILED, error_message="System shutdown")
+
+
+# Global instance for ease of use
+operation_monitor = OperationMonitor(OperationMonitoringConfig())

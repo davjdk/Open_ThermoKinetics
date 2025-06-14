@@ -43,7 +43,9 @@ class TestOperationContext:
         assert context.duration == 0.0
 
         # Test with actual time difference
-        context.end_time = start_time.replace(microsecond=start_time.microsecond + 500000)
+        from datetime import timedelta
+
+        context.end_time = start_time + timedelta(microseconds=500000)
         assert 0.4 <= context.duration <= 0.6  # Allow for minor timing variations
 
 

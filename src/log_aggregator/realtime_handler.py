@@ -23,7 +23,6 @@ from .operation_aggregator import OperationAggregationConfig, OperationAggregato
 from .pattern_detector import PatternDetector
 from .safe_message_utils import safe_get_message
 from .tabular_formatter import TabularFormatter
-from .value_aggregator import ValueAggregationConfig, ValueAggregator
 
 
 class AggregatingHandler(logging.Handler):
@@ -41,7 +40,6 @@ class AggregatingHandler(logging.Handler):
         enable_error_expansion: Optional[bool] = None,
         enable_tabular_formatting: Optional[bool] = None,
         enable_operation_aggregation: Optional[bool] = None,
-        enable_value_aggregation: Optional[bool] = None,
     ):
         """
         Initialize aggregating handler.
@@ -52,7 +50,6 @@ class AggregatingHandler(logging.Handler):
             enable_error_expansion: Whether to enable error expansion
             enable_tabular_formatting: Whether to enable tabular formatting
             enable_operation_aggregation: Whether to enable operation aggregation
-            enable_value_aggregation: Whether to enable value aggregation
         """
         super().__init__()
 
@@ -72,11 +69,6 @@ class AggregatingHandler(logging.Handler):
             enable_operation_aggregation
             if enable_operation_aggregation is not None
             else getattr(self.config, "operation_aggregation_enabled", True)
-        )
-        self.enable_value_aggregation = (
-            enable_value_aggregation
-            if enable_value_aggregation is not None
-            else getattr(self.config, "value_aggregation_enabled", True)
         )
 
         # Initialize components
@@ -105,11 +97,6 @@ class AggregatingHandler(logging.Handler):
         operation_config = self.config.operation_aggregation or OperationAggregationConfig()
         operation_config.enabled = self.enable_operation_aggregation
         self.operation_aggregator = OperationAggregator(config=operation_config)
-
-        # Value aggregator (Stage 4.5)
-        value_config = self.config.value_aggregation or ValueAggregationConfig()
-        value_config.enabled = self.enable_value_aggregation
-        self.value_aggregator = ValueAggregator(config=value_config)
 
         # Processing control
         self._processing_lock = threading.RLock()
@@ -149,18 +136,12 @@ class AggregatingHandler(logging.Handler):
             # Always forward to target handler if aggregation is disabled
             if not self._enabled:
                 self._forward_to_target(record)
-                return
-
-            # Convert to BufferedLogRecord for processing
+                return  # Convert to BufferedLogRecord for processing
             from datetime import datetime
 
-            buffered_record = BufferedLogRecord(
-                record=record, timestamp=datetime.now()
-            )  # Value aggregation (Stage 4.5) - apply to all non-error records
-            if self.enable_value_aggregation and record.levelno < logging.WARNING:
-                processed_message = self.value_aggregator.process_message(buffered_record)
-                # Update the record message with the processed version
-                record.msg = processed_message  # Operation aggregation (Stage 4.5) - detect operation cascades
+            buffered_record = BufferedLogRecord(record=record, timestamp=datetime.now())
+
+            # Operation aggregation (Stage 4.5) - detect operation cascades
             cascade_handled = False
             if self.enable_operation_aggregation:
                 completed_group = self.operation_aggregator.process_record(buffered_record)
@@ -174,18 +155,10 @@ class AggregatingHandler(logging.Handler):
                 cascade_handled = self.operation_aggregator.current_group is not None
 
             # Add record to buffer
-            self.buffer_manager.add_record(record)
-
-            # Check for immediate error expansion (Stage 4)
+            self.buffer_manager.add_record(record)  # Check for immediate error expansion (Stage 4)
             if self.enable_error_expansion:
                 buffered_record = self.buffer_manager._context_buffer[-1]  # Get the just-added record
                 if self.error_expansion_engine.is_error_record(buffered_record):
-                    # Restore full values for error context
-                    if self.enable_value_aggregation:
-                        full_context = self.value_aggregator.get_full_context(buffered_record)
-                        if full_context:
-                            buffered_record.record.msg = full_context
-
                     self._handle_error_immediately(buffered_record)
                     return  # Don't forward original error, only expanded version
 
@@ -404,11 +377,6 @@ class AggregatingHandler(logging.Handler):
         self.enable_operation_aggregation = enabled
         self._logger.info(f"Operation aggregation {'enabled' if enabled else 'disabled'}")
 
-    def toggle_value_aggregation(self, enabled: bool) -> None:
-        """Enable/disable value aggregation."""
-        self.enable_value_aggregation = enabled
-        self._logger.info(f"Value aggregation {'enabled' if enabled else 'disabled'}")
-
     def get_statistics(self) -> Dict[str, Any]:
         """Get comprehensive statistics about aggregation performance."""
         buffer_stats = self.buffer_manager.get_statistics()
@@ -455,10 +423,6 @@ class AggregatingHandler(logging.Handler):
                 }
             )
 
-        if self.enable_value_aggregation:
-            value_stats = self.value_aggregator.get_stats()
-            stats.update(value_stats)
-
         return stats
 
     def reset_statistics(self) -> None:
@@ -473,13 +437,9 @@ class AggregatingHandler(logging.Handler):
         self.buffer_manager.reset_statistics()
         self.pattern_detector.clear_patterns()
         self.aggregation_engine.reset_statistics()
-        self.error_expansion_engine.reset_statistics()
-
-        # Reset aggregator statistics (Stage 4.5)
+        self.error_expansion_engine.reset_statistics()  # Reset aggregator statistics (Stage 4.5)
         if hasattr(self, "operation_aggregator"):
             self.operation_aggregator.reset_stats()
-        if hasattr(self, "value_aggregator"):
-            self.value_aggregator.reset_stats()
 
     def _handle_internal_error(self, error: Exception) -> None:
         """
@@ -504,5 +464,4 @@ class AggregatingHandler(logging.Handler):
                 f"Too many internal errors ({self._internal_error_count}). " "Disabling advanced aggregation features."
             )
             self.toggle_error_expansion(False)
-            self.toggle_value_aggregation(False)
             # Keep basic aggregation and tabular formatting active

@@ -26,7 +26,6 @@ class LoggerManager:
         enable_error_expansion: bool = True,
         enable_tabular_format: bool = True,
         enable_operation_aggregation: bool = True,
-        enable_value_aggregation: bool = True,
         aggregation_preset: str = "default",
         force_reconfigure: bool = False,
     ) -> None:
@@ -122,15 +121,12 @@ class LoggerManager:
                         if hasattr(agg_config, key):
                             setattr(agg_config, key, value)
 
-                # Update component configurations
-                if agg_config.error_expansion:
+                    # Update component configurations                if agg_config.error_expansion:
                     agg_config.error_expansion.enabled = enable_error_expansion
                 if agg_config.tabular_formatting:
                     agg_config.tabular_formatting.enabled = enable_tabular_format
                 if agg_config.operation_aggregation:
                     agg_config.operation_aggregation.enabled = enable_operation_aggregation
-                if agg_config.value_aggregation:
-                    agg_config.value_aggregation.enabled = enable_value_aggregation
 
                 # Create aggregating handlers for both console and aggregated file
                 console_aggregating_handler = AggregatingHandler(
@@ -139,7 +135,6 @@ class LoggerManager:
                     enable_error_expansion=enable_error_expansion,
                     enable_tabular_formatting=enable_tabular_format,
                     enable_operation_aggregation=enable_operation_aggregation,
-                    enable_value_aggregation=enable_value_aggregation,
                 )
                 console_aggregating_handler.setLevel(console_level)
                 console_aggregating_handler.setFormatter(console_formatter)
@@ -150,7 +145,6 @@ class LoggerManager:
                     enable_error_expansion=enable_error_expansion,
                     enable_tabular_formatting=enable_tabular_format,
                     enable_operation_aggregation=enable_operation_aggregation,
-                    enable_value_aggregation=enable_value_aggregation,
                 )
                 aggregated_file_aggregating_handler.setLevel(file_level)
                 aggregated_file_aggregating_handler.setFormatter(detailed_formatter)
@@ -168,7 +162,6 @@ class LoggerManager:
                 root_logger.info(f"Error expansion: {enable_error_expansion}")
                 root_logger.info(f"Tabular formatting: {enable_tabular_format}")
                 root_logger.info(f"Operation aggregation: {enable_operation_aggregation}")
-                root_logger.info(f"Value aggregation: {enable_value_aggregation}")
 
                 # Setup separate debug logging for internal aggregator logs (Stage 2)
                 cls._setup_debug_aggregator_logging()
@@ -268,16 +261,8 @@ class LoggerManager:
         """Enable/disable operation aggregation in runtime."""
         for handler in cls._aggregating_handlers:
             if hasattr(handler, "enable_operation_aggregation"):
-                handler.enable_operation_aggregation = enabled
+                handler.enable_operation_aggregation = enabled @ classmethod
 
-    @classmethod
-    def toggle_value_aggregation(cls, enabled: bool) -> None:
-        """Enable/disable value aggregation in runtime."""
-        for handler in cls._aggregating_handlers:
-            if hasattr(handler, "enable_value_aggregation"):
-                handler.enable_value_aggregation = enabled
-
-    @classmethod
     def get_aggregation_stats(cls) -> dict:
         """Get extended aggregation statistics including aggregators."""
         combined_stats = {
@@ -351,30 +336,21 @@ class LoggerManager:
                     config_data[f"handler_{i}"] = handler.config.to_dict()
                 else:
                     config_data[f"handler_{i}"] = str(handler.config)
-        return config_data
+        return config_data @ classmethod
 
-    @classmethod
-    def update_aggregation_config(cls, config_updates: dict) -> None:  # noqa: C901
+    def update_aggregation_config(cls, config_updates: dict) -> None:
         """Update aggregation configuration in runtime."""
         for handler in cls._aggregating_handlers:
             if hasattr(handler, "config"):
                 # Update basic configuration fields
                 for key, value in config_updates.items():
                     if hasattr(handler.config, key):
-                        setattr(handler.config, key, value)
-
-                # Update component configurations
+                        setattr(handler.config, key, value)  # Update component configurations
                 if "operation_aggregation" in config_updates and hasattr(handler.config, "operation_aggregation"):
                     op_config = config_updates["operation_aggregation"]
                     for key, value in op_config.items():
                         if hasattr(handler.config.operation_aggregation, key):
                             setattr(handler.config.operation_aggregation, key, value)
-
-                if "value_aggregation" in config_updates and hasattr(handler.config, "value_aggregation"):
-                    val_config = config_updates["value_aggregation"]
-                    for key, value in val_config.items():
-                        if hasattr(handler.config.value_aggregation, key):
-                            setattr(handler.config.value_aggregation, key, value)
 
     @classmethod
     def _setup_debug_aggregator_logging(cls):
@@ -396,7 +372,6 @@ class LoggerManager:
             "log_aggregator.realtime_handler",
             "log_aggregator.pattern_detector",
             "log_aggregator.error_expansion",
-            "log_aggregator.value_aggregator",
             "log_aggregator.operation_aggregator",
             "log_aggregator.tabular_formatter",
             "log_aggregator.buffer_manager",
@@ -489,7 +464,6 @@ LoggerManager.configure_logging(
     enable_error_expansion=True,
     enable_tabular_format=True,
     enable_operation_aggregation=True,
-    enable_value_aggregation=True,
 )
 
 
