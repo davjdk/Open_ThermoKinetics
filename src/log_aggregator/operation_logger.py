@@ -1,8 +1,9 @@
 """
-Operation Logger API for explicit operation boundaries marking.
+Operation Logger API for explicit operation boundaries marking with decorator support.
 
-This module provides a simple API for developers to explicitly mark operation
+This module provides a simplified API for developers to explicitly mark operation
 boundaries in code, enabling detailed tracking and analysis of user operations.
+Supports automatic tabular output and integrates with @operation decorator.
 """
 
 import logging
@@ -35,12 +36,17 @@ except ImportError:
     HAS_PANDAS = False
     pd = None
 
-# Import OperationAggregator for integration
+# Import components for explicit mode operation
 try:
+    from .config import OperationAggregationConfig, TabularFormattingConfig
     from .operation_aggregator import OperationAggregator
+    from .tabular_formatter import TabularFormatter
 except ImportError:
-    # Handle case where aggregator is not available
+    # Handle case where components are not available
     OperationAggregator = None
+    TabularFormatter = None
+    TabularFormattingConfig = None
+    OperationAggregationConfig = None
 
 
 @dataclass
@@ -65,7 +71,7 @@ class DataCompressionConfig:
 
 @dataclass
 class OperationContext:
-    """Context information for a single operation."""
+    """Context information for a single operation with error tracking."""
 
     operation_id: str
     operation_name: str
@@ -74,6 +80,9 @@ class OperationContext:
     metrics: Dict[str, Any] = field(default_factory=dict)
     status: str = "RUNNING"
     end_time: Optional[datetime] = None
+    error_info: Optional[Dict[str, Any]] = None
+    sub_operations_count: int = 0
+    files_modified: int = 0
 
     @property
     def duration(self) -> Optional[float]:
@@ -82,14 +91,23 @@ class OperationContext:
             return (self.end_time - self.start_time).total_seconds()
         return None
 
+    def add_error_info(self, exc_type: type, exc_val: Exception, exc_tb=None) -> None:
+        """Add error information to context."""
+        self.error_info = {
+            "type": exc_type.__name__ if exc_type else "Unknown",
+            "message": str(exc_val) if exc_val else "Unknown error",
+            "traceback": str(exc_tb) if exc_tb else None,
+        }
+        self.status = "ERROR"
+
 
 class OperationLogger:
     """
-    Main API class for explicit operation logging with built-in data compression.
+    Main API class for explicit operation logging with automatic tabular output.
 
     Provides simple methods for marking operation boundaries and collecting
-    custom metrics within operations. Includes functionality previously
-    provided by ValueAggregator for large data handling.
+    custom metrics within operations. Integrates with @operation decorator
+    and automatically generates ASCII tables after each operation.
     """
 
     def __init__(
@@ -98,21 +116,41 @@ class OperationLogger:
         aggregator=None,
         compression_config: Optional[DataCompressionConfig] = None,
         operation_monitor: Optional["OperationMonitor"] = None,
+        enable_tables: bool = True,
     ):
         """
         Initialize the operation logger.
 
         Args:
             logger_name: Name of the logger to use for operation logging
-            aggregator: Optional OperationAggregator for integration
+            aggregator: Optional OperationAggregator for integration (explicit mode only)
             compression_config: Configuration for data compression
             operation_monitor: Optional OperationMonitor for enhanced tracking
+            enable_tables: Whether to enable automatic ASCII table generation
         """
         self.logger = logging.getLogger(logger_name)
-        self.aggregator = aggregator
         self.compression_config = compression_config or DataCompressionConfig()
         self.operation_monitor = operation_monitor
-        self._local = threading.local()
+        self.enable_tables = enable_tables
+        self._local = threading.local()  # Initialize tabular formatter if available and enabled
+        self.tabular_formatter = None
+        if enable_tables and TabularFormatter:
+            try:
+                table_config = TabularFormattingConfig() if TabularFormattingConfig else None
+                self.tabular_formatter = TabularFormatter(table_config)
+            except Exception as e:
+                self.logger.warning(f"Could not initialize TabularFormatter: {e}")
+
+        # Initialize aggregator in explicit mode only
+        self.aggregator = None
+        if aggregator and OperationAggregator:
+            try:
+                # Ensure aggregator is in explicit mode
+                if hasattr(aggregator, "config") and hasattr(aggregator.config, "explicit_mode"):
+                    aggregator.config.explicit_mode = True
+                self.aggregator = aggregator
+            except Exception as e:
+                self.logger.warning(f"Could not initialize OperationAggregator: {e}")
 
     @property
     def _operation_stack(self) -> List[OperationContext]:
@@ -126,12 +164,13 @@ class OperationLogger:
         """Get current operation context."""
         return self._operation_stack[-1] if self._operation_stack else None
 
-    def start_operation(self, operation_name: str) -> str:
+    def start_operation(self, operation_name: str, **context) -> str:
         """
         Start a new operation.
 
         Args:
             operation_name: Name of the operation to start
+            **context: Additional context parameters
 
         Returns:
             operation_id: Unique identifier for this operation
@@ -139,55 +178,68 @@ class OperationLogger:
         operation_id = self._generate_operation_id(operation_name)
         parent_id = self.current_operation.operation_id if self.current_operation else None
 
-        context = OperationContext(
+        operation_context = OperationContext(
             operation_id=operation_id,
             operation_name=operation_name,
             start_time=datetime.now(),
             parent_operation_id=parent_id,
         )
 
-        self._operation_stack.append(context)  # Log operation start
-        self._log_operation_start(context)
+        # Add any additional context as metrics
+        if context:
+            operation_context.metrics.update(context)
 
-        # Integrate with operation_monitor if available
-        if self.operation_monitor and not parent_id:  # Only track root operations
-            self.operation_monitor.start_operation_tracking(operation_name)
+        self._operation_stack.append(operation_context)
 
-        # Integrate with aggregator if available
-        if self.aggregator and not parent_id:  # Only start aggregation for root operations
-            self.aggregator.start_operation(operation_name)
+        # Log operation start
+        self._log_operation_start(operation_context)
+
+        # Integrate with operation_monitor if available (only for root operations)
+        if self.operation_monitor and not parent_id:
+            try:
+                self.operation_monitor.start_operation_tracking(operation_name)
+            except Exception as e:
+                self.logger.warning(f"OperationMonitor integration error: {e}")
+
+        # Integrate with aggregator if available (only for root operations)
+        if self.aggregator and not parent_id:
+            try:
+                self.aggregator.start_operation(operation_name)
+            except Exception as e:
+                self.logger.warning(f"OperationAggregator integration error: {e}")
 
         return operation_id
 
-    def end_operation(self, operation_id: Optional[str] = None, status: str = "SUCCESS") -> None:
+    def end_operation(self, status: str = "SUCCESS", error_info: dict = None) -> None:
         """
-        End the current operation.
+        End the current operation and automatically generate ASCII table.
 
         Args:
-            operation_id: Optional operation ID to end (defaults to current)
             status: Operation completion status
+            error_info: Optional error information dictionary
         """
         if not self._operation_stack:
             self.logger.warning("No active operation to end")
             return
 
         context = self._operation_stack.pop()
-
-        # Validate operation ID if provided
-        if operation_id and context.operation_id != operation_id:
-            self.logger.warning(f"Operation ID mismatch: expected {context.operation_id}, got {operation_id}")
-
         context.end_time = datetime.now()
-        context.status = status  # Log operation end
+        context.status = status
+
+        # Add error information if provided
+        if error_info:
+            context.error_info = error_info
+
+        # Log operation end
         self._log_operation_end(context)
 
-        # Integrate with operation_monitor if available
-        if self.operation_monitor and not context.parent_operation_id:  # Only track root operations
-            self.operation_monitor.end_operation_tracking()
+        # Update parent operation's sub-operation count
+        if self.current_operation:
+            self.current_operation.sub_operations_count += 1
 
-        # Integrate with aggregator if available
-        if self.aggregator and not context.parent_operation_id:  # Only end aggregation for root operations
-            self.aggregator.end_operation()
+        # Only handle aggregation and table generation for root operations
+        if not context.parent_operation_id:
+            self._handle_root_operation_end(context)
 
     def add_metric(self, key: str, value: Any) -> None:
         """
@@ -199,13 +251,20 @@ class OperationLogger:
         """
         if not self.current_operation:
             self.logger.warning(f"No active operation to add metric {key}")
-            return  # Apply data compression if enabled
-        processed_value = self._compress_value(value) if self.compression_config.enabled else value
-        self.current_operation.metrics[key] = processed_value
+            return
 
-        # Add metric to operation_monitor if available
-        if self.operation_monitor and self.operation_monitor.current_operation:
-            self.operation_monitor.add_custom_metric(key, processed_value)
+        # Apply data compression if enabled
+        processed_value = self._compress_value(value) if self.compression_config.enabled else value
+        self.current_operation.metrics[key] = processed_value  # Add metric to operation_monitor if available
+        if (
+            self.operation_monitor
+            and hasattr(self.operation_monitor, "current_operation")
+            and self.operation_monitor.current_operation
+        ):
+            try:
+                self.operation_monitor.add_custom_metric(key, processed_value)
+            except Exception as e:
+                self.logger.debug(f"OperationMonitor metric integration error: {e}")
 
         # Log metric addition with compressed representation
         display_value = self._get_display_value(processed_value)
@@ -217,6 +276,101 @@ class OperationLogger:
                 "metric_value": processed_value,
             },
         )
+
+    def get_current_operation(self) -> Optional[OperationContext]:
+        """Get the current operation context."""
+        return self.current_operation
+
+    def _handle_root_operation_end(self, context: OperationContext) -> None:
+        """Handle completion of root operation with table generation and aggregator integration."""
+        # Integrate with operation_monitor if available
+        if self.operation_monitor:
+            try:
+                self.operation_monitor.end_operation_tracking()
+            except Exception as e:
+                self.logger.warning(f"OperationMonitor integration error: {e}")
+
+        # Integrate with aggregator if available
+        if self.aggregator:
+            try:
+                self.aggregator.end_operation()
+            except Exception as e:
+                self.logger.warning(f"OperationAggregator integration error: {e}")
+
+        # Generate and display ASCII table if enabled
+        if self.enable_tables and self.tabular_formatter:
+            try:
+                self._generate_operation_table(context)
+            except Exception as e:
+                self.logger.warning(f"Table generation error: {e}")
+
+    def _generate_operation_table(self, context: OperationContext) -> None:
+        """Generate ASCII table for completed operation."""
+        if not self.tabular_formatter:
+            return
+
+        # Create table data structure
+        table_data = self._create_operation_table_data(context)
+        # Format and log the table
+        if table_data and hasattr(self.tabular_formatter, "_format_ascii_table"):
+            try:
+                formatted_table = self.tabular_formatter._format_ascii_table(table_data)
+                self.logger.info(f"\n{formatted_table}")
+            except Exception as e:
+                self.logger.debug(f"ASCII table formatting error: {e}")
+
+    def _create_operation_table_data(self, context: OperationContext) -> Optional[Dict[str, Any]]:
+        """Create table data structure for operation context."""
+        try:
+            # Import TableData if available
+            from .tabular_formatter import TableData
+
+            # Prepare table headers and data
+            headers = ["Metric", "Value"]
+            rows = [
+                ["Operation", context.operation_name],
+                ["Status", context.status],
+                ["Duration (s)", f"{context.duration:.3f}" if context.duration else "N/A"],
+                ["Sub-operations", str(context.sub_operations_count)],
+                ["Files Modified", str(context.files_modified)],
+            ]
+
+            # Add custom metrics
+            for key, value in context.metrics.items():
+                display_value = self._get_display_value(value)
+                rows.append([f"  {key}", display_value])
+
+            # Add error information if present
+            if context.error_info:
+                rows.append(["Error Type", context.error_info.get("type", "Unknown")])
+                rows.append(["Error Message", context.error_info.get("message", "Unknown")])
+
+            # Create table data object
+            status_emoji = "✅" if context.status == "SUCCESS" else "❌"
+            title = f"{status_emoji} Operation Summary: {context.operation_name}"
+
+            return TableData(
+                title=title,
+                headers=headers,
+                rows=rows,
+                summary=f"Completed at {context.end_time.strftime('%H:%M:%S')}" if context.end_time else None,
+                table_type="operation_summary",
+            )
+
+        except ImportError:
+            # Fallback to simple dict if TableData not available
+            return {
+                "title": f"Operation Summary: {context.operation_name}",
+                "headers": ["Metric", "Value"],
+                "rows": [
+                    ["Status", context.status],
+                    ["Duration", f"{context.duration:.3f}s" if context.duration else "N/A"],
+                ],
+                "table_type": "operation_summary",
+            }
+        except Exception as e:
+            self.logger.debug(f"Error creating table data: {e}")
+            return None
 
     def _compress_value(self, value: Any) -> Any:
         """
@@ -367,13 +521,12 @@ class OperationLogger:
         Usage:
             with operation_logger.log_operation("LOAD_FILE"):
                 # Your code here
-                pass
-        """
+                pass"""
         return _OperationContextManager(self, operation_name)
 
     def operation(self, name: Optional[str] = None):
         """
-        Decorator for automatic operation logging.
+        Decorator for automatic operation logging with enhanced error handling.
 
         Args:
             name: Optional operation name (defaults to function name)
@@ -389,8 +542,20 @@ class OperationLogger:
 
             @wraps(func)
             def wrapper(*args, **kwargs):
+                # Use the enhanced context manager
                 with self.log_operation(operation_name):
+                    # Add function metadata as metrics
+                    if hasattr(func, "__module__"):
+                        self.add_metric("module", func.__module__)
+                    if args and hasattr(args[0], "__class__"):
+                        self.add_metric("class", args[0].__class__.__name__)
+
                     return func(*args, **kwargs)
+
+            # Store operation metadata on the wrapper for introspection
+            wrapper._operation_name = operation_name  # type: ignore
+            wrapper._is_operation_decorated = True  # type: ignore
+            wrapper._original_function = func  # type: ignore
 
             return wrapper
 
@@ -398,13 +563,23 @@ class OperationLogger:
 
     def reset(self) -> None:
         """Reset the operation logger to clean state."""
-        # Clear thread-local storage if it exists
-        if hasattr(self._local, "current_operation"):
-            self._local.current_operation = None
+        # Clear thread-local operation stack
+        if hasattr(self._local, "operation_stack"):
+            self._local.operation_stack.clear()
 
         # Reset the aggregator if present
         if self.aggregator and hasattr(self.aggregator, "reset"):
-            self.aggregator.reset()
+            try:
+                self.aggregator.reset()
+            except Exception as e:
+                self.logger.warning(f"Error resetting aggregator: {e}")
+
+        # Reset operation monitor if present
+        if self.operation_monitor and hasattr(self.operation_monitor, "reset"):
+            try:
+                self.operation_monitor.reset()
+            except Exception as e:
+                self.logger.warning(f"Error resetting operation monitor: {e}")
 
     def _generate_operation_id(self, operation_name: str) -> str:
         """Generate unique operation ID."""
@@ -456,7 +631,7 @@ class OperationLogger:
 
 
 class _OperationContextManager:
-    """Context manager for operation logging."""
+    """Context manager for operation logging with enhanced error handling."""
 
     def __init__(self, operation_logger: OperationLogger, operation_name: str):
         self.operation_logger = operation_logger
@@ -469,13 +644,20 @@ class _OperationContextManager:
 
     def __exit__(self, exc_type, exc_val, exc_tb):
         status = "ERROR" if exc_type is not None else "SUCCESS"
+        error_info = None
 
-        # Log exception details if occurred
+        # Collect exception details if occurred
         if exc_type is not None:
+            error_info = {
+                "type": exc_type.__name__,
+                "message": str(exc_val),
+                "traceback": str(exc_tb) if exc_tb else None,
+            }
+            # Also add as metrics for compatibility
             self.operation_logger.add_metric("error_type", exc_type.__name__)
             self.operation_logger.add_metric("error_message", str(exc_val))
 
-        self.operation_logger.end_operation(self.operation_id, status)
+        self.operation_logger.end_operation(status, error_info)
 
 
 # Global operation logger instance
