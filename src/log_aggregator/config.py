@@ -5,7 +5,10 @@ This module provides basic configuration settings for the log aggregation
 system, including buffer management and pattern detection parameters.
 """
 
+import json
+import os
 from dataclasses import dataclass, field
+from pathlib import Path
 from typing import Dict, List, Optional, Set
 
 
@@ -586,7 +589,6 @@ class OperationMonitoringConfig:
 
     flow_timeout_seconds: float = 600.0
     """Timeout for operation flows"""
-
     enable_performance_tracking: bool = True
     """Whether to track operation performance"""
 
@@ -604,3 +606,586 @@ class OperationMonitoringConfig:
 
     log_level: str = "INFO"
     """Log level for operation monitoring"""
+
+
+DEFAULT_OPERATION_LOGGING_CONFIG = {
+    "logging": {
+        "operation_time_frame": 1.0,
+        "cascade_window": 1.5,
+        "operation_timeout": 300.0,
+        "nested_operation_timeout": 60.0,
+        "aggregate_nested_operations": True,
+        "max_operation_depth": 10,
+        "enable_operation_grouping": True,
+        "group_by_thread": True,
+        "tabulate_enabled": True,
+        "tabulate_format": "grid",
+        "force_ascii_tables": True,
+        "table_max_width": 120,
+        "table_headers": True,
+        "use_unicode_symbols": False,
+        "timestamp_format": "%Y-%m-%d %H:%M:%S",
+        "duration_precision": 3,
+        "max_error_message_length": 100,
+        "detail_level": "normal",
+        "include_user_metrics": True,
+        "include_file_metrics": True,
+        "include_performance_metrics": True,
+        "exclude_operations": [],
+        "include_only_operations": [],
+        "min_operation_duration": 0.0,
+        "log_full_traceback": False,
+        "auto_recovery_enabled": True,
+        "max_recovery_attempts": 3,
+        "enable_async_logging": False,
+        "buffer_size": 1000,
+        "flush_interval": 5.0,
+    },
+    "tabular": {
+        "enabled": True,
+        "format_style": "grid",
+        "headers_enabled": True,
+        "max_table_width": 120,
+        "max_rows_per_table": 20,
+        "property_column_width": 20,
+        "value_column_width": 40,
+        "number_format": ".3f",
+        "align_numbers": "right",
+        "align_text": "left",
+        "show_summary": True,
+        "compact_mode": False,
+        "ascii_only": True,
+        "priority_tables": ["operation_summary", "error_analysis", "cascade_operations"],
+        "success_symbol": "[OK]",
+        "error_symbol": "[ERR]",
+        "timeout_symbol": "[TMO]",
+        "running_symbol": "[RUN]",
+    },
+    "metrics": {
+        "collect_timing_metrics": True,
+        "collect_memory_metrics": False,
+        "collect_cpu_metrics": False,
+        "collect_io_metrics": True,
+        "track_file_operations": True,
+        "track_file_sizes": True,
+        "track_file_modifications": True,
+        "track_reaction_metrics": True,
+        "track_optimization_metrics": True,
+        "track_convergence_metrics": True,
+        "track_quality_metrics": True,
+        "allow_custom_metrics": True,
+        "max_custom_metrics": 50,
+        "custom_metrics_prefix": "user_",
+        "compress_large_data": True,
+        "array_compression_threshold": 10,
+        "dataframe_compression_threshold": 5,
+        "string_compression_threshold": 200,
+    },
+}
+
+
+def get_default_operation_config() -> Dict:
+    """
+    Get default operation logging configuration.
+
+    Returns:
+        Dictionary with default configuration settings
+    """
+    return DEFAULT_OPERATION_LOGGING_CONFIG.copy()
+
+
+def update_config_from_env(config: Dict = None) -> Dict:
+    """
+    Update configuration with environment variables.
+
+    Args:
+        config: Configuration dictionary to update (uses default if None)
+
+    Returns:
+        Updated configuration dictionary
+    """
+    if config is None:
+        config = get_default_operation_config()
+
+    # Environment variable mappings
+    env_mappings = {
+        # Logging settings
+        "SSK_OPERATION_TIME_FRAME": ("logging", "operation_time_frame", float),
+        "SSK_CASCADE_WINDOW": ("logging", "cascade_window", float),
+        "SSK_OPERATION_TIMEOUT": ("logging", "operation_timeout", float),
+        "SSK_DETAIL_LEVEL": ("logging", "detail_level", str),
+        "SSK_USE_UNICODE": ("logging", "use_unicode_symbols", bool),
+        "SSK_ENABLE_ASYNC": ("logging", "enable_async_logging", bool),
+        "SSK_BUFFER_SIZE": ("logging", "buffer_size", int),
+        "SSK_FLUSH_INTERVAL": ("logging", "flush_interval", float),
+        # Tabular settings
+        "SSK_TABULATE_FORMAT": ("tabular", "format_style", str),
+        "SSK_TABLE_MAX_WIDTH": ("tabular", "max_table_width", int),
+        "SSK_ASCII_ONLY": ("tabular", "ascii_only", bool),
+        "SSK_SHOW_HEADERS": ("tabular", "headers_enabled", bool),
+        "SSK_MAX_ROWS": ("tabular", "max_rows_per_table", int),
+        # Metrics settings
+        "SSK_COLLECT_MEMORY": ("metrics", "collect_memory_metrics", bool),
+        "SSK_COLLECT_CPU": ("metrics", "collect_cpu_metrics", bool),
+        "SSK_TRACK_FILES": ("metrics", "track_file_operations", bool),
+        "SSK_TRACK_OPTIMIZATION": ("metrics", "track_optimization_metrics", bool),
+        "SSK_MAX_CUSTOM_METRICS": ("metrics", "max_custom_metrics", int),
+    }
+
+    for env_var, (section, key, value_type) in env_mappings.items():
+        if env_var in os.environ:
+            raw_value = os.environ[env_var]
+            try:
+                if value_type is bool:
+                    value = raw_value.lower() in ("true", "1", "yes", "on")
+                elif value_type is float:
+                    value = float(raw_value)
+                elif value_type is int:
+                    value = int(raw_value)
+                else:
+                    value = raw_value
+
+                if section in config:
+                    config[section][key] = value
+
+            except (ValueError, TypeError):
+                # Ignore invalid environment variable values
+                pass
+
+    return config
+
+
+def save_config_to_file(config: Dict, file_path: str) -> bool:
+    """
+    Save configuration to JSON file.
+
+    Args:
+        config: Configuration dictionary to save
+        file_path: Path to save the configuration file
+
+    Returns:
+        True if saved successfully, False otherwise
+    """
+    try:
+        file_path_obj = Path(file_path)
+        file_path_obj.parent.mkdir(parents=True, exist_ok=True)
+
+        with open(file_path, "w", encoding="utf-8") as f:
+            json.dump(config, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+
+def load_config_from_file(file_path: str) -> Optional[Dict]:
+    """
+    Load configuration from JSON file.
+
+    Args:
+        file_path: Path to the configuration file
+
+    Returns:
+        Configuration dictionary if loaded successfully, None otherwise
+    """
+    try:
+        with open(file_path, "r", encoding="utf-8") as f:
+            return json.load(f)
+    except Exception:
+        return None
+
+
+def validate_operation_config(config: Dict) -> List[str]:
+    """
+    Validate operation configuration settings.
+
+    Args:
+        config: Configuration dictionary to validate
+
+    Returns:
+        List of validation error messages (empty if valid)
+    """
+    errors = []
+
+    # Validate each section separately
+    if "logging" in config:
+        errors.extend(_validate_logging_config(config["logging"]))
+
+    if "tabular" in config:
+        errors.extend(_validate_tabular_config(config["tabular"]))
+
+    if "metrics" in config:
+        errors.extend(_validate_metrics_config(config["metrics"]))
+
+    return errors
+
+
+def _validate_logging_config(logging_config: Dict) -> List[str]:
+    """Validate logging configuration section."""
+    errors = []
+
+    # Check required numeric fields
+    numeric_fields = {
+        "operation_time_frame": (0, float("inf")),
+        "cascade_window": (0, float("inf")),
+        "operation_timeout": (0, float("inf")),
+        "nested_operation_timeout": (0, float("inf")),
+        "max_operation_depth": (1, 1000),
+        "duration_precision": (0, 10),
+        "max_error_message_length": (10, 10000),
+        "max_recovery_attempts": (0, 100),
+        "buffer_size": (1, 100000),
+        "flush_interval": (0.1, 3600.0),
+    }
+
+    for field_name, (min_val, max_val) in numeric_fields.items():
+        value = logging_config.get(field_name)
+        if value is not None:
+            if not isinstance(value, (int, float)) or not (min_val <= value <= max_val):
+                errors.append(f"logging.{field_name} must be between {min_val} and {max_val}")
+
+    # Check enum fields
+    valid_detail_levels = ["minimal", "normal", "detailed", "debug"]
+    detail_level = logging_config.get("detail_level")
+    if detail_level and detail_level not in valid_detail_levels:
+        errors.append(f"logging.detail_level must be one of {valid_detail_levels}")
+
+    valid_formats = ["grid", "simple", "plain", "pipe", "orgtbl", "rst", "mediawiki", "html", "latex"]
+    tabulate_format = logging_config.get("tabulate_format")
+    if tabulate_format and tabulate_format not in valid_formats:
+        errors.append(f"logging.tabulate_format must be one of {valid_formats}")
+
+    return errors
+
+
+def _validate_tabular_config(tabular_config: Dict) -> List[str]:
+    """Validate tabular configuration section."""
+    errors = []
+
+    # Check numeric constraints
+    table_width = tabular_config.get("max_table_width")
+    if table_width is not None and (not isinstance(table_width, int) or table_width < 50):
+        errors.append("tabular.max_table_width must be at least 50")
+
+    max_rows = tabular_config.get("max_rows_per_table")
+    if max_rows is not None and (not isinstance(max_rows, int) or max_rows < 1):
+        errors.append("tabular.max_rows_per_table must be at least 1")
+
+    col_width = tabular_config.get("property_column_width")
+    if col_width is not None and (not isinstance(col_width, int) or col_width < 5):
+        errors.append("tabular.property_column_width must be at least 5")
+
+    val_width = tabular_config.get("value_column_width")
+    if val_width is not None and (not isinstance(val_width, int) or val_width < 5):
+        errors.append("tabular.value_column_width must be at least 5")
+
+    # Check format style
+    valid_styles = ["grid", "simple", "plain", "pipe", "orgtbl", "rst", "mediawiki", "html", "latex"]
+    format_style = tabular_config.get("format_style")
+    if format_style and format_style not in valid_styles:
+        errors.append(f"tabular.format_style must be one of {valid_styles}")
+
+    return errors
+
+
+def _validate_metrics_config(metrics_config: Dict) -> List[str]:
+    """Validate metrics configuration section."""
+    errors = []
+
+    max_custom = metrics_config.get("max_custom_metrics")
+    if max_custom is not None and (not isinstance(max_custom, int) or max_custom < 0):
+        errors.append("metrics.max_custom_metrics must be non-negative")
+
+    # Check compression thresholds
+    thresholds = [
+        ("array_compression_threshold", 1, 1000),
+        ("dataframe_compression_threshold", 1, 1000),
+        ("string_compression_threshold", 10, 10000),
+    ]
+
+    for field_name, min_val, max_val in thresholds:
+        value = metrics_config.get(field_name)
+        if value is not None and (not isinstance(value, int) or not (min_val <= value <= max_val)):
+            errors.append(f"metrics.{field_name} must be between {min_val} and {max_val}")
+
+    return errors
+
+
+def merge_config_with_defaults(user_config: Dict) -> Dict:
+    """
+    Merge user configuration with defaults, ensuring all required fields are present.
+
+    Args:
+        user_config: User-provided configuration dictionary
+
+    Returns:
+        Merged configuration with defaults filled in
+    """
+    default_config = get_default_operation_config()
+
+    def deep_merge(default: Dict, user: Dict) -> Dict:
+        """Recursively merge user config into default config."""
+        result = default.copy()
+
+        for key, value in user.items():
+            if key in result and isinstance(result[key], dict) and isinstance(value, dict):
+                result[key] = deep_merge(result[key], value)
+            else:
+                result[key] = value
+
+        return result
+
+    return deep_merge(default_config, user_config)
+
+
+def create_minimal_config() -> Dict:
+    """
+    Create minimal configuration suitable for testing or lightweight usage.
+
+    Returns:
+        Minimal configuration dictionary
+    """
+    config = get_default_operation_config()
+
+    # Reduce buffer sizes and timeouts for minimal usage
+    config["logging"].update(
+        {"buffer_size": 100, "flush_interval": 1.0, "operation_timeout": 60.0, "max_operation_depth": 5}
+    )
+
+    config["tabular"].update({"max_rows_per_table": 10, "max_table_width": 80})
+
+    config["metrics"].update({"collect_memory_metrics": False, "collect_cpu_metrics": False, "max_custom_metrics": 10})
+
+    return config
+
+
+def create_performance_config() -> Dict:
+    """
+    Create configuration optimized for performance.
+
+    Returns:
+        Performance-optimized configuration dictionary
+    """
+    config = get_default_operation_config()
+
+    # Optimize for performance
+    config["logging"].update(
+        {"buffer_size": 2000, "flush_interval": 0.5, "enable_async_logging": True, "detail_level": "minimal"}
+    )
+
+    config["tabular"].update(
+        {
+            "enabled": False,  # Disable for performance
+            "compact_mode": True,
+        }
+    )
+
+    config["metrics"].update(
+        {"collect_memory_metrics": False, "collect_cpu_metrics": False, "compress_large_data": True}
+    )
+
+    return config
+
+
+def get_config_schema() -> Dict:
+    """
+    Get the configuration schema for validation and documentation.
+
+    Returns:
+        Dictionary describing the configuration schema
+    """
+    return {
+        "logging": {
+            "operation_time_frame": {"type": "float", "min": 0, "description": "Time frame for operation grouping"},
+            "cascade_window": {"type": "float", "min": 0, "description": "Time window for cascade detection"},
+            "operation_timeout": {"type": "float", "min": 0, "description": "Timeout for operations"},
+            "detail_level": {"type": "enum", "values": ["minimal", "normal", "detailed", "debug"]},
+            "buffer_size": {"type": "int", "min": 1, "max": 100000, "description": "Log buffer size"},
+            "flush_interval": {"type": "float", "min": 0.1, "max": 3600, "description": "Buffer flush interval"},
+        },
+        "tabular": {
+            "enabled": {"type": "bool", "description": "Enable tabular formatting"},
+            "max_table_width": {"type": "int", "min": 50, "description": "Maximum table width"},
+            "max_rows_per_table": {"type": "int", "min": 1, "description": "Maximum rows per table"},
+            "format_style": {"type": "enum", "values": ["grid", "simple", "plain", "pipe"]},
+        },
+        "metrics": {
+            "collect_timing_metrics": {"type": "bool", "description": "Collect timing metrics"},
+            "max_custom_metrics": {"type": "int", "min": 0, "description": "Maximum custom metrics"},
+        },
+    }
+
+
+# =============================================================================
+# LEGACY FUNCTIONS FOR JSON LOADING (kept for compatibility)
+# =============================================================================
+# These functions maintain compatibility with existing code that expects
+# to load from JSON files, but now use the embedded configuration.
+
+
+def load_operation_logging_config(config_path: Optional[str] = None) -> Dict:
+    """
+    Load operation logging configuration.
+
+    If config_path is provided and the file exists, loads from file.
+    Otherwise, returns the default embedded configuration.
+
+    Args:
+        config_path: Path to configuration file (optional)
+
+    Returns:
+        Dictionary containing configuration data
+    """
+    if config_path and os.path.exists(config_path):
+        try:
+            with open(config_path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, IOError):
+            # Fall back to default if file is corrupted
+            pass
+
+    # Return embedded default configuration
+    return get_default_operation_config()
+
+
+def apply_json_config_to_tabular_formatting(config_data: Dict) -> TabularFormattingConfig:
+    """
+    Apply configuration data to TabularFormattingConfig.
+
+    Args:
+        config_data: Configuration dictionary (from JSON or embedded default)
+
+    Returns:
+        Updated TabularFormattingConfig instance
+    """
+    tabular_config = TabularFormattingConfig()
+
+    if "tabular" in config_data:
+        tabular_section = config_data["tabular"]
+
+        # Map configuration keys to TabularFormattingConfig attributes
+        if "enabled" in tabular_section:
+            tabular_config.enabled = tabular_section["enabled"]
+        if "max_table_width" in tabular_section:
+            tabular_config.max_table_width = tabular_section["max_table_width"]
+        if "max_rows_per_table" in tabular_section:
+            tabular_config.max_rows_per_table = tabular_section["max_rows_per_table"]
+        if "ascii_only" in tabular_section:
+            tabular_config.ascii_tables = tabular_section["ascii_only"]
+        if "show_summary" in tabular_section:
+            tabular_config.include_summaries = tabular_section["show_summary"]
+        if "priority_tables" in tabular_section:
+            tabular_config.priority_tables = tabular_section["priority_tables"]
+
+    return tabular_config
+
+
+def apply_json_config_to_operation_aggregation(config_data: Dict) -> OperationAggregationConfig:
+    """
+    Apply configuration data to OperationAggregationConfig.
+
+    Args:
+        config_data: Configuration dictionary (from JSON or embedded default)
+
+    Returns:
+        Updated OperationAggregationConfig instance
+    """
+    aggregation_config = OperationAggregationConfig()
+
+    if "logging" in config_data:
+        logging_section = config_data["logging"]
+
+        # Map configuration keys to OperationAggregationConfig attributes
+        if "aggregate_nested_operations" in logging_section:
+            aggregation_config.enabled = logging_section["aggregate_nested_operations"]
+        if "cascade_window" in logging_section:
+            aggregation_config.cascade_window = logging_section["cascade_window"]
+
+    return aggregation_config
+
+
+def apply_json_config_to_operation_monitor(config_data: Dict) -> OperationMonitoringConfig:
+    """
+    Apply configuration data to OperationMonitoringConfig.
+
+    Args:
+        config_data: Configuration dictionary (from JSON or embedded default)
+
+    Returns:
+        Updated OperationMonitoringConfig instance
+    """
+    monitor_config = OperationMonitoringConfig()
+
+    if "logging" in config_data:
+        logging_section = config_data["logging"]
+
+        # Map configuration keys to OperationMonitoringConfig attributes
+        if "operation_timeout" in logging_section:
+            monitor_config.operation_timeout_seconds = logging_section["operation_timeout"]
+        if "include_performance_metrics" in logging_section:
+            monitor_config.enable_performance_tracking = logging_section["include_performance_metrics"]
+
+    if "metrics" in config_data:
+        metrics_section = config_data["metrics"]
+        if "track_file_operations" in metrics_section:
+            monitor_config.enable_memory_tracking = metrics_section["track_file_operations"]
+
+    return monitor_config
+
+
+def create_config_from_json(config_path: Optional[str] = None) -> Dict:
+    """
+    Create complete configuration from embedded defaults or JSON file.
+
+    Args:
+        config_path: Path to configuration file (optional)
+
+    Returns:
+        Dictionary containing all configuration objects
+    """
+    config_data = load_operation_logging_config(config_path)
+
+    return {
+        "tabular_formatting": apply_json_config_to_tabular_formatting(config_data),
+        "operation_aggregation": apply_json_config_to_operation_aggregation(config_data),
+        "operation_monitoring": apply_json_config_to_operation_monitor(config_data),
+        "raw_json": config_data,
+    }
+
+
+def get_default_config_path() -> Path:
+    """
+    Get the default configuration file path (legacy function).
+
+    Note: This path is no longer required as configuration is embedded,
+    but kept for compatibility.
+
+    Returns:
+        Path where configuration file would be located
+    """
+    return Path(__file__).parent.parent.parent / "config" / "operation_logging_config.json"
+
+
+# =============================================================================
+# CONFIGURATION ACCESS HELPERS
+# =============================================================================
+
+
+def get_logging_config(config: Dict = None) -> Dict:
+    """Get logging section of configuration."""
+    if config is None:
+        config = get_default_operation_config()
+    return config.get("logging", {})
+
+
+def get_tabular_config(config: Dict = None) -> Dict:
+    """Get tabular section of configuration."""
+    if config is None:
+        config = get_default_operation_config()
+    return config.get("tabular", {})
+
+
+def get_metrics_config(config: Dict = None) -> Dict:
+    """Get metrics section of configuration."""
+    if config is None:
+        config = get_default_operation_config()
+    return config.get("metrics", {})

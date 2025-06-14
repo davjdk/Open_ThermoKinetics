@@ -51,6 +51,14 @@ except ImportError:
     OperationErrorHandler = None
     DefaultOperationErrorHandler = None
 
+try:
+    from .operation_config_manager import config_manager
+
+    HAS_CONFIG_MANAGER = True
+except ImportError:
+    HAS_CONFIG_MANAGER = False
+    config_manager = None
+
 
 @dataclass
 class DataCompressionConfig:
@@ -137,9 +145,31 @@ class OperationLogger:
         self.compression_config = compression_config or DataCompressionConfig()
         self.operation_monitor = operation_monitor
         self.enable_tables = enable_tables
-        self._local = threading.local()
+        self._local = threading.local()  # Initialize components
+        self._init_config_manager()
+        self._init_error_handlers(error_handlers)
+        self._init_aggregator(aggregator)
+        self._init_tabular_formatter()
 
-        # Initialize error handlers
+    def _init_config_manager(self):
+        """Initialize configuration manager integration."""
+        self._config_manager = None
+        self._operation_config = None
+        self._tabular_config = None
+        if HAS_CONFIG_MANAGER and config_manager:
+            self._config_manager = config_manager
+            self._operation_config = self._config_manager.get_logging_config()
+            self._tabular_config = self._config_manager.get_tabular_config()
+
+            # Subscribe to configuration changes
+            self._config_manager.add_observer(self._on_config_changed)
+
+            # Override enable_tables with configuration
+            if self._tabular_config:
+                self.enable_tables = self._tabular_config.enabled
+
+    def _init_error_handlers(self, error_handlers):
+        """Initialize error handlers."""
         self._error_handlers: List = []
         self._default_error_handler = None
         if DefaultOperationErrorHandler:
@@ -150,16 +180,18 @@ class OperationLogger:
             for handler in error_handlers:
                 self.register_error_handler(handler)
 
-        # Initialize tabular formatter if available and enabled
+    def _init_tabular_formatter(self):
+        """Initialize tabular formatter if available and enabled."""
         self.tabular_formatter = None
-        if enable_tables and TabularFormatter:
+        if self.enable_tables and TabularFormatter:
             try:
                 table_config = TabularFormattingConfig() if TabularFormattingConfig else None
                 self.tabular_formatter = TabularFormatter(table_config)
             except Exception as e:
                 self.logger.warning(f"Could not initialize TabularFormatter: {e}")
 
-        # Initialize aggregator in explicit mode only
+    def _init_aggregator(self, aggregator):
+        """Initialize aggregator in explicit mode only."""
         self.aggregator = None
         if aggregator and OperationAggregator:
             try:
@@ -193,6 +225,10 @@ class OperationLogger:
         Returns:
             operation_id: Unique identifier for this operation
         """
+        # Check if operation should be filtered
+        if self._should_filter_operation(operation_name):
+            return ""  # Return empty ID for filtered operations
+
         operation_id = self._generate_operation_id(operation_name)
         parent_id = self.current_operation.operation_id if self.current_operation else None
 
@@ -247,6 +283,10 @@ class OperationLogger:
         # Add error information if provided
         if error_info:
             context.error_info = error_info
+
+        # Check if operation should be logged based on duration
+        if not self._should_log_operation(context):
+            return
 
         # Log operation end
         self._log_operation_end(context)
@@ -703,6 +743,64 @@ class OperationLogger:
                 "metrics": context.metrics,
             },
         )
+
+    def _on_config_changed(self, section: str, key: str, value: Any) -> None:
+        """Handle configuration changes."""
+        try:
+            if section == "tabular" and key == "enabled":
+                self.enable_tables = value
+                if value and not self.tabular_formatter and TabularFormatter:
+                    self._initialize_tabular_formatter()
+                elif not value:
+                    self.tabular_formatter = None
+            elif section == "logging" and key == "operation_timeout":
+                # Update operation timeout if needed
+                self._operation_timeout = value
+            elif section == "logging" and key == "tabulate_format":
+                # Reinitialize formatter with new format
+                if self.tabular_formatter:
+                    self._initialize_tabular_formatter()
+        except Exception as e:
+            self.logger.warning(f"Error applying configuration change {section}.{key}={value}: {e}")
+
+    def _initialize_tabular_formatter(self) -> None:
+        """Initialize or reinitialize tabular formatter with current config."""
+        try:
+            if self._tabular_config:
+                format_style = self._tabular_config.format_style
+            else:
+                format_style = "grid"
+
+            self.tabular_formatter = TabularFormatter(table_format=format_style)
+        except Exception as e:
+            self.logger.warning(f"Could not initialize TabularFormatter: {e}")
+
+    def _should_filter_operation(self, operation_name: str) -> bool:
+        """Check if operation should be filtered based on configuration."""
+        if not self._operation_config:
+            return False
+        # Check exclude list
+        if self._operation_config.exclude_operations and operation_name in self._operation_config.exclude_operations:
+            return True
+
+        # Check include-only list
+        if (
+            self._operation_config.include_only_operations
+            and operation_name not in self._operation_config.include_only_operations
+        ):
+            return True
+
+        return False
+
+    def _should_log_operation(self, operation_context: OperationContext) -> bool:
+        """Check if operation should be logged based on duration and configuration."""
+        if not self._operation_config:
+            return True
+
+        duration = operation_context.duration or 0
+        return duration >= self._operation_config.min_operation_duration
+
+    # ...existing methods...
 
 
 class _OperationContextManager:

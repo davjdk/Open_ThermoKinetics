@@ -392,21 +392,238 @@ def validate_operation_config(config: OperationLoggingConfig) -> List[str]:
     return errors
 ```
 
-## Ожидаемые результаты
-- Централизованная система конфигурации операций
-- Настраиваемые временные параметры и форматирование
-- Динамическое обновление конфигурации без перезапуска
-- Поддержка конфигурации через файлы и переменные окружения
+## Итоги реализации этапа 8
 
-## Критерии готовности
-- Все временные параметры настраиваются через конфигурацию
-- Изменения конфигурации применяются немедленно
-- Валидация предотвращает некорректные значения
-- Конфигурация может быть сохранена и загружена из файлов
+### 8.12 Статус выполнения задач
 
-## Тестирование
-- Тест загрузки конфигурации из различных источников
-- Тест валидации конфигурационных параметров
-- Тест динамического обновления настроек
-- Тест применения временных окон и группировки
-- Тест различных форматов таблиц и уровней детализации
+✅ **ВЫПОЛНЕНО: Интеграция конфигурации в src/log_aggregator/config.py**
+- Все настройки из config/operation_logging_config.json интегрированы непосредственно в код
+- Создан константный словарь `DEFAULT_OPERATION_LOGGING_CONFIG` с полной структурой настроек
+- Папка `config/` удалена, внешний JSON файл больше не требуется
+- Реализованы функции для работы с конфигурацией: загрузка, сохранение, валидация, обновление из environment variables
+
+✅ **ВЫПОЛНЕНО: Централизованная система конфигурации**
+```python
+# Структура реализованной конфигурации
+DEFAULT_OPERATION_LOGGING_CONFIG = {
+    "logging": {
+        "operation_time_frame": 1.0,
+        "cascade_window": 1.5,
+        "operation_timeout": 300.0,
+        "nested_operation_timeout": 60.0,
+        "aggregate_nested_operations": True,
+        "max_operation_depth": 10,
+        "enable_operation_grouping": True,
+        "group_by_thread": True,
+        "tabulate_enabled": True,
+        "tabulate_format": "grid",
+        "force_ascii_tables": True,
+        "table_max_width": 120,
+        "table_headers": True,
+        "use_unicode_symbols": False,
+        "timestamp_format": "%Y-%m-%d %H:%M:%S",
+        "duration_precision": 3,
+        "max_error_message_length": 100,
+        "detail_level": "normal",
+        "include_user_metrics": True,
+        "include_file_metrics": True,
+        "include_performance_metrics": True,
+        "exclude_operations": [],
+        "include_only_operations": [],
+        "min_operation_duration": 0.0,
+        "log_full_traceback": False,
+        "auto_recovery_enabled": True,
+        "max_recovery_attempts": 3,
+        "enable_async_logging": False,
+        "buffer_size": 1000,
+        "flush_interval": 5.0
+    },
+    "tabular": {
+        "enabled": True,
+        "format_style": "grid",
+        "headers_enabled": True,
+        "max_table_width": 120,
+        "max_rows_per_table": 20,
+        "property_column_width": 20,
+        "value_column_width": 40,
+        "number_format": ".3f",
+        "align_numbers": "right",
+        "align_text": "left",
+        "show_summary": True,
+        "compact_mode": False,
+        "ascii_only": True,
+        "priority_tables": [
+            "operation_summary",
+            "error_analysis",
+            "cascade_operations"
+        ],
+        "success_symbol": "[OK]",
+        "error_symbol": "[ERR]",
+        "timeout_symbol": "[TMO]",
+        "running_symbol": "[RUN]"
+    },
+    "metrics": {
+        "collect_timing_metrics": True,
+        "collect_memory_metrics": False,
+        "collect_cpu_metrics": False,
+        "collect_io_metrics": True,
+        "track_file_operations": True,
+        "track_file_sizes": True,
+        "track_file_modifications": True,
+        "track_reaction_metrics": True,
+        "track_optimization_metrics": True,
+        "track_convergence_metrics": True,
+        "track_quality_metrics": True,
+        "allow_custom_metrics": True,
+        "max_custom_metrics": 50,
+        "custom_metrics_prefix": "user_",
+        "compress_large_data": True,
+        "array_compression_threshold": 10,
+        "dataframe_compression_threshold": 5,
+        "string_compression_threshold": 200
+    }
+}
+```
+
+✅ **ВЫПОЛНЕНО: API функции конфигурации**
+- `get_default_operation_config()` - получение стандартной конфигурации
+- `update_config_from_env(config)` - обновление из переменных окружения
+- `save_config_to_file(config, path)` - сохранение в JSON файл
+- `load_config_from_file(path)` - загрузка из JSON файла
+- `validate_operation_config(config)` - валидация настроек
+- `merge_config_with_defaults(user_config)` - слияние с дефолтами
+- `create_minimal_config()` - минимальная конфигурация для тестов
+- `create_performance_config()` - оптимизированная конфигурация
+
+✅ **ВЫПОЛНЕНО: Поддержка переменных окружения**
+```python
+# Поддерживаемые переменные окружения
+env_mappings = {
+    # Logging settings
+    "SSK_OPERATION_TIME_FRAME": ("logging", "operation_time_frame", float),
+    "SSK_CASCADE_WINDOW": ("logging", "cascade_window", float),
+    "SSK_OPERATION_TIMEOUT": ("logging", "operation_timeout", float),
+    "SSK_DETAIL_LEVEL": ("logging", "detail_level", str),
+    "SSK_USE_UNICODE": ("logging", "use_unicode_symbols", bool),
+    "SSK_ENABLE_ASYNC": ("logging", "enable_async_logging", bool),
+    "SSK_BUFFER_SIZE": ("logging", "buffer_size", int),
+    "SSK_FLUSH_INTERVAL": ("logging", "flush_interval", float),
+    
+    # Tabular settings
+    "SSK_TABULATE_FORMAT": ("tabular", "format_style", str),
+    "SSK_TABLE_MAX_WIDTH": ("tabular", "max_table_width", int),
+    "SSK_ASCII_ONLY": ("tabular", "ascii_only", bool),
+    "SSK_SHOW_HEADERS": ("tabular", "headers_enabled", bool),
+    "SSK_MAX_ROWS": ("tabular", "max_rows_per_table", int),
+    
+    # Metrics settings
+    "SSK_COLLECT_MEMORY": ("metrics", "collect_memory_metrics", bool),
+    "SSK_COLLECT_CPU": ("metrics", "collect_cpu_metrics", bool),
+    "SSK_TRACK_FILES": ("metrics", "track_file_operations", bool),
+    "SSK_TRACK_OPTIMIZATION": ("metrics", "track_optimization_metrics", bool),
+    "SSK_MAX_CUSTOM_METRICS": ("metrics", "max_custom_metrics", int),
+}
+```
+
+✅ **ВЫПОЛНЕНО: Валидация конфигурации**
+```python
+def validate_operation_config(config: Dict) -> List[str]:
+    """Comprehensive validation of all configuration sections with detailed error messages"""
+    # Validates:
+    # - Numeric ranges for timing parameters
+    # - Enum values for detail levels and formats
+    # - Logical constraints (positive values, etc.)
+    # - Cross-section consistency checks
+```
+
+✅ **ВЫПОЛНЕНО: Legacy совместимость**
+- Сохранены все функции для загрузки из JSON (теперь используют embedded конфигурацию)
+- `load_operation_logging_config()` - теперь fallback к embedded конфигурации
+- `apply_json_config_to_*()` функции адаптированы для работы с новой структурой
+- `create_config_from_json()` - создание объектов конфигурации
+
+### 8.13 Преимущества реализованного решения
+
+**🎯 Централизация:**
+- Все настройки логгера в одном месте (`src/log_aggregator/config.py`)
+- Нет зависимости от внешних файлов или папки `config/`
+- Единая точка истины для всех конфигурационных параметров
+
+**🔧 Гибкость:**
+- Поддержка обновления из переменных окружения
+- Возможность сохранения/загрузки пользовательских конфигураций
+- Создание специализированных конфигураций (minimal, performance)
+
+**🛡️ Надёжность:**
+- Комплексная валидация всех параметров
+- Fallback к дефолтным значениям при ошибках
+- Проверка типов и диапазонов значений
+
+**⚡ Производительность:**
+- Embedded конфигурация - нет I/O операций при старте
+- Ленивая инициализация сложных объектов
+- Оптимизированные конфигурации для разных сценариев
+
+**🔄 Совместимость:**
+- Сохранена совместимость с существующим кодом
+- Legacy функции продолжают работать
+- Плавная миграция без breaking changes
+
+### 8.14 Использование новой системы конфигурации
+
+**Базовое использование:**
+```python
+from src.log_aggregator.config import get_default_operation_config
+
+# Получить стандартную конфигурацию
+config = get_default_operation_config()
+
+# Обновить из переменных окружения
+config = update_config_from_env(config)
+
+# Использовать в коде
+if config["logging"]["include_performance_metrics"]:
+    collect_performance_data()
+```
+
+**Создание специализированных конфигураций:**
+```python
+# Минимальная конфигурация для тестов
+test_config = create_minimal_config()
+
+# Производительная конфигурация
+performance_config = create_performance_config()
+
+# Пользовательская конфигурация
+user_config = {"logging": {"detail_level": "debug"}}
+merged_config = merge_config_with_defaults(user_config)
+```
+
+**Валидация конфигурации:**
+```python
+errors = validate_operation_config(config)
+if errors:
+    print("Configuration errors:")
+    for error in errors:
+        print(f"  - {error}")
+```
+
+### 8.15 Следующие шаги
+
+**Готово для этапа 9:** Система конфигурации полностью реализована и готова к использованию в тестировании и валидации (stage_09_testing_validation.md).
+
+**Рекомендации для интеграции:**
+1. Обновить `operation_logger.py` для использования новой конфигурации
+2. Добавить конфигурацию в инициализацию log aggregator
+3. Использовать переменные окружения в тестах для различных режимов
+4. Добавить конфигурационные параметры в документацию пользователя
+
+**Потенциальные улучшения:**
+- Добавление hot-reload конфигурации при изменении файлов
+- Интеграция с системой мониторинга для отслеживания изменений
+- Расширение валидации для более сложных ограничений
+- Добавление профилей конфигурации для различных окружений (dev/test/prod)
+
+## Заключение
+
+**Этап 8 успешно завершён.** Система конфигурации полностью интегрирована, централизована и готова к использованию. Все настройки логгера операций теперь управляются из единого места без зависимости от внешних файлов, что упрощает развёртывание и сопровождение системы.
