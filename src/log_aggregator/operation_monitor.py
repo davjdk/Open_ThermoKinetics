@@ -705,14 +705,17 @@ class OperationMonitor:
 
         with self._lock:
             for flow_id, flow in self._active_flows.items():
-                elapsed = (current_time - flow.start_time).total_seconds()
-
-                # Check for stuck flows
+                elapsed = (current_time - flow.start_time).total_seconds()  # Check for stuck flows
                 if elapsed > 30 and flow.completed_operations == 0:
                     self.logger.warning(
                         f"⚠️ STUCK FLOW: {flow.root_operation_type} | ID: {flow_id} | "
                         f"No completed operations after {elapsed:.1f}s"
                     )
+
+    def get_completed_operations(self) -> List[OperationMetrics]:
+        """Get list of completed operations."""
+        with self._lock:
+            return self.completed_operations.copy()
 
     def shutdown(self) -> None:
         """Shutdown operation monitor."""

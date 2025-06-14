@@ -136,8 +136,9 @@ class TestOperationSystemE2E:
 
         # Проверить, что таблицы могут быть созданы даже с пустым списком
         builder = OperationTableBuilder()
-        summary_table = builder.build_operation_summary_table(completed_operations)
-        # Tables generation should work even with empty operations
+        summary_table = builder.build_operation_summary_table(
+            completed_operations
+        )  # Tables generation should work even with empty operations
         assert summary_table is not None, "Should generate operation summary table"
         assert hasattr(summary_table, "title"), "Table should have title attribute"
 
@@ -146,8 +147,8 @@ class TestOperationSystemE2E:
         completed_operations = operation_monitor.completed_operations
         # Проверить наличие метрик в операциях
         for op in completed_operations:
-            assert hasattr(op, "metrics"), f"Operation {op.name} should have metrics"
-            assert len(op.metrics) > 0, f"Operation {op.name} should have non-empty metrics"
+            assert hasattr(op, "custom_metrics"), f"Operation {op.operation_type} should have custom_metrics"
+            assert len(op.custom_metrics) > 0, f"Operation {op.operation_type} should have non-empty custom_metrics"
 
     def verify_concurrent_operation_separation(self):
         """Проверить разделение параллельных операций"""

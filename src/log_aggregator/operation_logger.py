@@ -12,7 +12,11 @@ import threading
 from dataclasses import dataclass, field
 from datetime import datetime
 from functools import wraps
-from typing import Any, Dict, List, Optional
+from typing import TYPE_CHECKING, Any, Dict, List, Optional
+
+# Conditional import to avoid circular dependencies
+if TYPE_CHECKING:
+    from .operation_monitor import OperationMonitor
 
 # Try to import numpy and pandas for data processing
 try:
@@ -93,6 +97,7 @@ class OperationLogger:
         logger_name: str = "solid_state_kinetics.operations",
         aggregator=None,
         compression_config: Optional[DataCompressionConfig] = None,
+        operation_monitor: Optional["OperationMonitor"] = None,
     ):
         """
         Initialize the operation logger.
@@ -101,10 +106,12 @@ class OperationLogger:
             logger_name: Name of the logger to use for operation logging
             aggregator: Optional OperationAggregator for integration
             compression_config: Configuration for data compression
+            operation_monitor: Optional OperationMonitor for enhanced tracking
         """
         self.logger = logging.getLogger(logger_name)
         self.aggregator = aggregator
         self.compression_config = compression_config or DataCompressionConfig()
+        self.operation_monitor = operation_monitor
         self._local = threading.local()
 
     @property
@@ -139,10 +146,12 @@ class OperationLogger:
             parent_operation_id=parent_id,
         )
 
-        self._operation_stack.append(context)
-
-        # Log operation start
+        self._operation_stack.append(context)  # Log operation start
         self._log_operation_start(context)
+
+        # Integrate with operation_monitor if available
+        if self.operation_monitor and not parent_id:  # Only track root operations
+            self.operation_monitor.start_operation_tracking(operation_name)
 
         # Integrate with aggregator if available
         if self.aggregator and not parent_id:  # Only start aggregation for root operations
@@ -169,10 +178,12 @@ class OperationLogger:
             self.logger.warning(f"Operation ID mismatch: expected {context.operation_id}, got {operation_id}")
 
         context.end_time = datetime.now()
-        context.status = status
-
-        # Log operation end
+        context.status = status  # Log operation end
         self._log_operation_end(context)
+
+        # Integrate with operation_monitor if available
+        if self.operation_monitor and not context.parent_operation_id:  # Only track root operations
+            self.operation_monitor.end_operation_tracking()
 
         # Integrate with aggregator if available
         if self.aggregator and not context.parent_operation_id:  # Only end aggregation for root operations
@@ -188,11 +199,15 @@ class OperationLogger:
         """
         if not self.current_operation:
             self.logger.warning(f"No active operation to add metric {key}")
-            return
-
-        # Apply data compression if enabled
+            return  # Apply data compression if enabled
         processed_value = self._compress_value(value) if self.compression_config.enabled else value
-        self.current_operation.metrics[key] = processed_value  # Log metric addition with compressed representation
+        self.current_operation.metrics[key] = processed_value
+
+        # Add metric to operation_monitor if available
+        if self.operation_monitor and self.operation_monitor.current_operation:
+            self.operation_monitor.add_custom_metric(key, processed_value)
+
+        # Log metric addition with compressed representation
         display_value = self._get_display_value(processed_value)
         self.logger.info(
             f"│ ├─ Метрика: {key} = {display_value}",
@@ -464,7 +479,23 @@ class _OperationContextManager:
 
 
 # Global operation logger instance
-operation_logger = OperationLogger()
+# Delayed import to avoid circular dependency
+_operation_logger = None
+
+
+def get_operation_logger():
+    """Get the global operation logger instance with operation_monitor integration."""
+    global _operation_logger
+    if _operation_logger is None:
+        # Import here to avoid circular dependency
+        from .operation_monitor import operation_monitor
+
+        _operation_logger = OperationLogger(operation_monitor=operation_monitor)
+    return _operation_logger
+
+
+# For backward compatibility
+operation_logger = get_operation_logger()
 
 
 # Convenience functions for direct import

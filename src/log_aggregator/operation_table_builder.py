@@ -300,6 +300,29 @@ class OperationTableBuilder:
             metadata={"domain": "solid_state_kinetics", "total_operations": len(operations)},
         )
 
+    def build_tables(self, operations: List[OperationMetrics]) -> List[OperationTableData]:
+        """
+        Build all relevant tables for a given list of operations.
+
+        Args:
+            operations: List of operation metrics
+
+        Returns:
+            List of OperationTableData (summary, performance, domain-specific)
+        """
+        tables = []
+        # General operation summary table
+        tables.append(self.build_operation_summary_table(operations, title="Operation Summary"))
+        # Performance metrics table
+        tables.append(self.build_performance_metrics_table(operations, title="Performance Metrics"))
+        # Domain-specific table (solid-state kinetics)
+        tables.append(
+            self.build_domain_specific_table(
+                operations, domain="solid_state_kinetics", title="Solid-State Kinetics Analysis"
+            )
+        )
+        return tables
+
     def _get_available_metrics(self, operations: List[OperationMetrics]) -> Set[str]:
         """Get set of available metrics across all operations."""
         available = set()
