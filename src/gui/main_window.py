@@ -147,8 +147,9 @@ class MainWindow(QMainWindow):
     def _handle_calculation_finished(self, params: dict):
         """Handle CALCULATION_FINISHED operation"""
         self.main_tab.sub_sidebar.deconvolution_sub_bar.calc_buttons.revert_to_default()
-        return True @ operation("MODEL_FREE_CALCULATION")
+        return True
 
+    @operation("MODEL_FREE_CALCULATION")
     def _handle_model_free_calculation(self, params: dict):
         series_name = params.get("series_name")
         operation_logger.add_metric("series_name", series_name)
@@ -346,10 +347,9 @@ class MainWindow(QMainWindow):
         self.handle_request_cycle(
             "series_data", OperationType.UPDATE_SERIES, series_name=series_name, update_data=update_data
         )
-        self.main_tab.sub_sidebar.model_fit_sub_bar.update_fit_results(fit_results) @ operation(
-            "LOAD_DECONVOLUTION_RESULTS"
-        )
+        self.main_tab.sub_sidebar.model_fit_sub_bar.update_fit_results(fit_results)
 
+    @operation("LOAD_DECONVOLUTION_RESULTS")
     def _handle_load_deconvolution_results(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
@@ -374,8 +374,9 @@ class MainWindow(QMainWindow):
         else:
             operation_logger.add_metric("update_successful", True)
 
-        self._handle_select_series(params) @ operation("SELECT_SERIES")
+        self._handle_select_series(params)
 
+    @operation("SELECT_SERIES")
     def _handle_select_series(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
@@ -420,10 +421,9 @@ class MainWindow(QMainWindow):
             self.main_tab.plot_canvas.plot_data_from_dataframe(reaction_df)
         self.main_tab.sub_sidebar.model_based.update_scheme_data(reaction_scheme)
         self.main_tab.sub_sidebar.model_based.update_calculation_settings(calculation_settings)
-        self.main_tab.sub_sidebar.series_sub_bar.update_series_ui(series_df, deconvolution_results) @ operation(
-            "MODEL_PARAMS_CHANGE"
-        )
+        self.main_tab.sub_sidebar.series_sub_bar.update_series_ui(series_df, deconvolution_results)
 
+    @operation("MODEL_PARAMS_CHANGE")
     def _handle_model_params_change(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
@@ -540,8 +540,9 @@ class MainWindow(QMainWindow):
         suggested_file_name = params["function"](params["file_name"], data)
         self.main_tab.sub_sidebar.deconvolution_sub_bar.file_transfer_buttons.export_reactions(
             data, suggested_file_name
-        ) @ operation("DECONVOLUTION") @ operation("DECONVOLUTION")
+        )
 
+    @operation("DECONVOLUTION")
     def _handle_deconvolution(self, params):
         operation_logger.add_metric("operation_type", "deconvolution")
         operation_logger.add_metric("params_count", len(params))
