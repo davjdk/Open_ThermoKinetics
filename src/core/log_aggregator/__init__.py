@@ -11,7 +11,16 @@ Architecture follows the project's principles:
 - Extensibility: Ready for future enhancements
 """
 
+from .operation_log import OperationLog
 from .operation_logger import OperationLogger, operation
 from .sub_operation_log import SubOperationLog
+from .table_formatter import OperationTableFormatter, format_operation_log
 
-__all__ = ["operation", "OperationLogger", "SubOperationLog"]
+__all__ = [
+    "operation",
+    "OperationLog",
+    "OperationLogger",
+    "SubOperationLog",
+    "OperationTableFormatter",
+    "format_operation_log",
+]
