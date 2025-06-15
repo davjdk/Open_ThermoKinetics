@@ -7,21 +7,114 @@ and logging operation execution in the solid-state kinetics application.
 Key components:
 - OperationLog: Data structure for operation information
 - @operation decorator: Wraps methods to capture execution metrics
-- OperationLogger: Main logging orchestrator (future expansion)
+- OperationLogger: Main logging orchestrator with sub-operation capture
+- HandleRequestCycleProxy: Proxy for intercepting handle_request_cycle calls
 """
 
 import functools
+import threading
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, List, Optional, TypeVar
 
-from src.core.logger_config import LoggerManager
+from ..logger_config import LoggerManager
+from .sub_operation_log import SubOperationLog
 
 # Get logger for this module
 logger = LoggerManager.get_logger(__name__)
 
 # Type variable for generic function decoration
 F = TypeVar("F", bound=Callable[..., Any])
+
+# Thread-local storage for tracking current operation context
+_operation_context = threading.local()
+
+
+def get_current_operation_logger() -> Optional["OperationLogger"]:
+    """Get the current operation logger from thread-local storage."""
+    return getattr(_operation_context, "current_logger", None)
+
+
+def set_current_operation_logger(operation_logger: Optional["OperationLogger"]) -> None:
+    """Set the current operation logger in thread-local storage."""
+    _operation_context.current_logger = operation_logger
+
+
+class HandleRequestCycleProxy:
+    """
+    Proxy class for intercepting handle_request_cycle calls during operations.
+
+    This proxy wraps the original handle_request_cycle method to capture
+    sub-operation information while preserving the original behavior.
+    """
+
+    def __init__(self, original_method: Callable, instance: Any):
+        """
+        Initialize the proxy with the original method and instance.
+
+        Args:
+            original_method: The original handle_request_cycle method
+            instance: The instance that owns the method
+        """
+        self.original_method = original_method
+        self.instance = instance
+
+    def __call__(self, target: str, operation: str, **kwargs) -> Any:
+        """
+        Proxy call that captures sub-operation data and calls original method.
+
+        Args:
+            target: The target system for the request
+            operation: The operation to be performed
+            **kwargs: Additional parameters for the request
+
+        Returns:
+            Any: The response from the original method
+        """
+        operation_logger = get_current_operation_logger()
+        if operation_logger is None:
+            # No active operation, just call original method
+            return self.original_method(target, operation, **kwargs)
+
+        # Create sub-operation log entry
+        step_number = len(operation_logger.current_operation.sub_operations) + 1
+        sub_op_log = SubOperationLog(
+            step_number=step_number,
+            operation_name=operation,
+            target=target,
+            start_time=time.time(),
+            request_kwargs=kwargs.copy(),
+        )
+
+        # Add to current operation tracking
+        operation_logger.current_operation.sub_operations.append(sub_op_log)
+
+        try:
+            # Call the original method
+            response = self.original_method(target, operation, **kwargs)
+
+            # Mark sub-operation as completed successfully
+            sub_op_log.mark_completed(response_data=response)
+
+            logger.debug(
+                f"Sub-operation {step_number}: {operation} -> {target} "
+                f"completed in {sub_op_log.duration_ms:.2f}ms with status {sub_op_log.status}"
+            )
+
+            return response
+
+        except Exception as e:
+            # Mark sub-operation as failed
+            exception_info = f"{type(e).__name__}: {str(e)}"
+            sub_op_log.mark_completed(response_data=None, exception_info=exception_info)
+
+            logger.debug(
+                f"Sub-operation {step_number}: {operation} -> {target} "
+                f"failed after {sub_op_log.duration_ms:.2f}ms: {exception_info}"
+            )
+
+            # Re-raise the exception to preserve original behavior
+            raise
 
 
 @dataclass
@@ -31,7 +124,8 @@ class OperationLog:
 
     This class captures all essential metrics for operation analysis:
     - Basic operation identification and timing
-    - Execution status and error handling    - Placeholder for future sub-operation tracking
+    - Execution status and error handling
+    - Sub-operation tracking through handle_request_cycle interception
     """
 
     operation_name: str
@@ -40,8 +134,7 @@ class OperationLog:
     status: str = "running"  # "success", "error", "running"
     execution_time: Optional[float] = None
     exception_info: Optional[str] = None
-    # Will be populated in Stage 2
-    sub_operations: List[Any] = field(default_factory=list)
+    sub_operations: List[SubOperationLog] = field(default_factory=list)
 
     def __post_init__(self):
         """Initialize operation with start timestamp."""
@@ -69,20 +162,36 @@ class OperationLog:
             return self.execution_time * 1000
         return None
 
+    @property
+    def sub_operations_count(self) -> int:
+        """Get the total number of sub-operations."""
+        return len(self.sub_operations)
+
+    @property
+    def successful_sub_operations_count(self) -> int:
+        """Get the number of successful sub-operations."""
+        return sum(1 for sub_op in self.sub_operations if sub_op.status == "OK")
+
+    @property
+    def failed_sub_operations_count(self) -> int:
+        """Get the number of failed sub-operations."""
+        return sum(1 for sub_op in self.sub_operations if sub_op.status == "Error")
+
 
 class OperationLogger:
     """
-    Main orchestrator for operation logging (placeholder for future expansion).
+    Main orchestrator for operation logging with sub-operation capture.
 
-    This class will be extended in later stages to handle:
-    - Sub-operation capture and aggregation
-    - Table formatting with tabulate
-    - Integration with LoggerManager
-    - File output and rotation
+    This class manages the complete lifecycle of operation tracking:
+    - Starting and completing operations
+    - Setting up handle_request_cycle interception
+    - Collecting and managing sub-operation data
+    - Preparing data for table formatting (future stages)
     """
 
     def __init__(self):
         self.current_operation: Optional[OperationLog] = None
+        self._original_methods: dict = {}  # Store original methods for restoration
 
     def start_operation(self, operation_name: str) -> OperationLog:
         """Start tracking a new operation."""
@@ -99,14 +208,72 @@ class OperationLogger:
         self.current_operation.mark_completed(success=success, exception_info=exception_info)
         duration = self.current_operation.duration_ms
         status = self.current_operation.status
+        sub_op_count = self.current_operation.sub_operations_count
+        successful_count = self.current_operation.successful_sub_operations_count
+        failed_count = self.current_operation.failed_sub_operations_count
 
         logger.debug(
             f"Operation '{self.current_operation.operation_name}' completed "
-            f"with status '{status}' in {duration:.2f}ms"
+            f"with status '{status}' in {duration:.2f}ms. "
+            f"Sub-operations: {sub_op_count} total, {successful_count} successful, {failed_count} failed"
         )
 
         # In future stages, this is where we'll call table formatting and file output
         self.current_operation = None
+
+    def setup_handle_request_cycle_interception(self, instance: Any) -> None:
+        """
+        Set up interception of handle_request_cycle method for the given instance.
+
+        Args:
+            instance: The object instance that has handle_request_cycle method
+        """
+        if not hasattr(instance, "handle_request_cycle"):
+            logger.warning(f"Instance {instance} does not have handle_request_cycle method")
+            return
+
+        # Store original method for restoration
+        original_method = instance.handle_request_cycle
+        instance_id = id(instance)
+        self._original_methods[instance_id] = original_method
+
+        # Create and set proxy
+        proxy = HandleRequestCycleProxy(original_method, instance)
+        instance.handle_request_cycle = proxy
+
+        logger.debug(f"Set up handle_request_cycle interception for {instance}")
+
+    def restore_handle_request_cycle(self, instance: Any) -> None:
+        """
+        Restore the original handle_request_cycle method for the given instance.
+
+        Args:
+            instance: The object instance to restore
+        """
+        instance_id = id(instance)
+        if instance_id in self._original_methods:
+            instance.handle_request_cycle = self._original_methods[instance_id]
+            del self._original_methods[instance_id]
+            logger.debug(f"Restored original handle_request_cycle for {instance}")
+        else:
+            logger.warning(f"No original method stored for instance {instance}")
+
+    def get_sub_operations_summary(self) -> dict:
+        """
+        Get a summary of sub-operations for the current operation.
+
+        Returns:
+            dict: Summary information about sub-operations
+        """
+        if self.current_operation is None:
+            return {}
+
+        return {
+            "total_count": self.current_operation.sub_operations_count,
+            "successful_count": self.current_operation.successful_sub_operations_count,
+            "failed_count": self.current_operation.failed_sub_operations_count,
+            "sub_operations": [sub_op.to_dict() for sub_op in self.current_operation.sub_operations],
+        }
 
 
 def operation(operation_name: str) -> Callable[[F], F]:
@@ -117,7 +284,7 @@ def operation(operation_name: str) -> Callable[[F], F]:
     - Execution timing (start/end/duration)
     - Success/failure status
     - Exception information
-    - Future: sub-operation tracking through handle_request_cycle
+    - Sub-operation tracking through handle_request_cycle interception
 
     Args:
         operation_name: Human-readable name for the operation
@@ -136,34 +303,62 @@ def operation(operation_name: str) -> Callable[[F], F]:
         @functools.wraps(func)
         def wrapper(*args, **kwargs) -> Any:
             # Initialize operation logger instance
-            operation_logger = OperationLogger()
-
-            # Start operation tracking
+            operation_logger = OperationLogger()  # Start operation tracking
             op_log = operation_logger.start_operation(operation_name)
 
+            # Set current operation logger in thread-local storage
+            set_current_operation_logger(operation_logger)
+
+            # Set up handle_request_cycle interception if instance has the method
+            instance = None
+            if args and hasattr(args[0], "handle_request_cycle"):
+                instance = args[0]
+                operation_logger.setup_handle_request_cycle_interception(instance)
+
             try:
-                logger.info(f"Operation '{operation_name}' started at " f"{time.strftime('%Y-%m-%d %H:%M:%S')}")
+                logger.info(f"Operation '{operation_name}' started at {time.strftime('%Y-%m-%d %H:%M:%S')}")
 
                 # Execute the original method
                 result = func(*args, **kwargs)
 
+                # Get summary before completing operation
+                sub_ops_summary = operation_logger.get_sub_operations_summary()
+
                 # Mark successful completion
                 operation_logger.complete_operation(success=True)
-                logger.info(f"Operation '{operation_name}' completed successfully " f"in {op_log.duration_ms:.2f}ms")
+                duration = op_log.duration_ms or 0.0
+
+                logger.info(
+                    f"Operation '{operation_name}' completed successfully "
+                    f"in {duration:.2f}ms with {sub_ops_summary.get('total_count', 0)} sub-operations"
+                )
 
                 return result
 
             except Exception as e:
+                # Get summary before completing operation
+                sub_ops_summary = operation_logger.get_sub_operations_summary()
+
                 # Capture exception information
                 exception_info = f"{type(e).__name__}: {str(e)}"
                 operation_logger.complete_operation(success=False, exception_info=exception_info)
+                duration = op_log.duration_ms or 0.0
 
                 logger.error(
-                    f"Operation '{operation_name}' failed after " f"{op_log.duration_ms:.2f}ms: {exception_info}"
+                    f"Operation '{operation_name}' failed after "
+                    f"{duration:.2f}ms with {sub_ops_summary.get('total_count', 0)} sub-operations: {exception_info}"
                 )
 
                 # Re-raise the exception to preserve original behavior
                 raise
+
+            finally:
+                # Restore original handle_request_cycle method if it was intercepted
+                if instance is not None:
+                    operation_logger.restore_handle_request_cycle(instance)
+
+                # Clear current operation logger from thread-local storage
+                set_current_operation_logger(None)
 
         return wrapper
 

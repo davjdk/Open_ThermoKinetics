@@ -12,5 +12,6 @@ Architecture follows the project's principles:
 """
 
 from .operation_logger import OperationLogger, operation
+from .sub_operation_log import SubOperationLog
 
-__all__ = ["operation", "OperationLogger"]
+__all__ = ["operation", "OperationLogger", "SubOperationLog"]
