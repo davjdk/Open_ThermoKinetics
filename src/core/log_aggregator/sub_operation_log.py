@@ -65,24 +65,8 @@ def _get_dict_type(data: Dict) -> str:
     return "dict"
 
 
-def determine_operation_status(response_data: Optional[Dict], exception_occurred: bool = False) -> str:
-    """
-    Determine if a sub-operation was successful based on response data.
-
-    Args:
-        response_data: The response dictionary from handle_request_cycle
-        exception_occurred: Whether an exception was caught during execution
-
-    Returns:
-        str: "OK" for success, "Error" for failure
-    """
-    if exception_occurred:
-        return "Error"
-
-    if response_data is None:
-        return "Error"
-
-    # Check if response contains data field
+def _handle_dict_response(response_data: dict) -> str:
+    """Handle dictionary response format."""
     data = response_data.get("data")
     if data is None:
         return "Error"
@@ -96,9 +80,51 @@ def determine_operation_status(response_data: Optional[Dict], exception_occurred
         if "error" in data:
             return "Error" if data["error"] else "OK"
 
+    # If data is boolean, use it directly
+    if isinstance(data, bool):
+        return "OK" if data else "Error"
+
     # If we got here, assume operation was successful
-    # (data exists and no explicit error indicators)
     return "OK"
+
+
+def _handle_non_dict_response(response_data: Any) -> str:
+    """Handle non-dictionary response format."""
+    if isinstance(response_data, bool):
+        return "OK" if response_data else "Error"
+
+    # For pandas DataFrames, check if it's empty or not None
+    if isinstance(response_data, pd.DataFrame):
+        try:
+            return "OK" if not response_data.empty else "Error"
+        except Exception:
+            return "OK"  # If any error checking DataFrame, assume it's OK if it exists
+
+    # For other non-dict types, consider them successful if not None
+    return "OK" if response_data is not None else "Error"
+
+
+def determine_operation_status(response_data: Any, exception_occurred: bool = False) -> str:
+    """
+    Determine if a sub-operation was successful based on response data.
+
+    Args:
+        response_data: The response data from handle_request_cycle (can be dict, bool, or other types)
+        exception_occurred: Whether an exception was caught during execution
+
+    Returns:
+        str: "OK" for success, "Error" for failure
+    """
+    if exception_occurred:
+        return "Error"
+
+    if response_data is None:
+        return "Error"
+
+    if isinstance(response_data, dict):
+        return _handle_dict_response(response_data)
+    else:
+        return _handle_non_dict_response(response_data)
 
 
 @dataclass
@@ -135,25 +161,24 @@ class SubOperationLog:
             exception_info: Exception information if an error occurred
         """
         self.end_time = time.time()
-        self.execution_time = self.end_time - self.start_time
-
-        # Determine status based on response and exceptions
+        self.execution_time = self.end_time - self.start_time  # Determine status based on response and exceptions
         exception_occurred = exception_info is not None
         self.status = determine_operation_status(response_data, exception_occurred)
 
         if exception_info:
             self.error_message = exception_info
-        elif self.status == "Error" and response_data:
+        elif self.status == "Error" and response_data is not None:
             # Try to extract error message from response data
-            data = response_data.get("data", {})
-            if isinstance(data, dict) and "error" in data:
-                self.error_message = str(data["error"])
+            if isinstance(response_data, dict):
+                data = response_data.get("data", {})
+                if isinstance(data, dict) and "error" in data:
+                    self.error_message = str(data["error"])
 
         # Determine data type
-        if response_data and "data" in response_data:
+        if response_data is not None and isinstance(response_data, dict) and "data" in response_data:
             self.data_type = get_data_type(response_data["data"])
         else:
-            self.data_type = "None"
+            self.data_type = get_data_type(response_data) if response_data is not None else "None"
 
     @property
     def duration_ms(self) -> Optional[float]:

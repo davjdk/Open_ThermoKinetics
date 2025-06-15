@@ -9,6 +9,7 @@ from scipy.optimize import OptimizeResult, differential_evolution
 from src.core.app_settings import OperationType
 from src.core.calculation_scenarios import SCENARIO_REGISTRY, make_de_callback
 from src.core.calculation_thread import CalculationThread
+from src.core.log_aggregator import operation
 from src.core.logger_config import logger
 from src.core.logger_console import LoggerConsole as console
 
@@ -41,6 +42,7 @@ class Calculations(BaseSlots):
         else:
             raise ValueError(f"Unknown strategy type: {strategy_type}")
 
+    @operation("START_CALCULATION")
     def start_calculation_thread(self, func: Callable, *args, **kwargs) -> None:
         self.stop_event.clear()
         self.calculation_active = True
@@ -48,6 +50,7 @@ class Calculations(BaseSlots):
         self.thread.result_ready.connect(self._calculation_finished)
         self.thread.start()
 
+    @operation("STOP_CALCULATION")
     def stop_calculation(self):
         if self.thread and self.thread.isRunning():
             logger.info("Stopping current calculation...")

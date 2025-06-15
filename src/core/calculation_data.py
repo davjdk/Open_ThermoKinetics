@@ -7,6 +7,7 @@ from core.base_signals import BaseSlots
 from PyQt6.QtCore import pyqtSignal
 
 from src.core.app_settings import OperationType
+from src.core.log_aggregator import operation
 from src.core.logger_config import logger
 from src.core.logger_console import LoggerConsole as console
 
@@ -19,6 +20,7 @@ class CalculationsData(BaseSlots):
         self._data: Dict[str, Any] = {}
         self._filename: str = ""
 
+    @operation("IMPORT_REACTIONS")
     def load_reactions(self, load_file_name: str, file_name: str) -> Dict[str, Any]:
         """Load reaction data from a file.
 
@@ -52,6 +54,7 @@ class CalculationsData(BaseSlots):
         except IOError as e:
             logger.error(f"{e}")
 
+    @operation("GET_VALUE")
     def get_value(self, keys: List[str]) -> Dict[str, Any]:
         """Get a nested value from the data dictionary.
 
@@ -63,6 +66,7 @@ class CalculationsData(BaseSlots):
         """
         return reduce(lambda data, key: data.get(key, {}), keys, self._data)
 
+    @operation("SET_VALUE")
     def set_value(self, keys: List[str], value: Any) -> None:
         """Set a nested value in the data dictionary.
 
@@ -91,6 +95,7 @@ class CalculationsData(BaseSlots):
         except KeyError:
             return False
 
+    @operation("REMOVE_VALUE")
     def remove_value(self, keys: List[str]) -> None:
         """Remove a nested value from the data dictionary.
 

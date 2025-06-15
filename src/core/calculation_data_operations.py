@@ -7,6 +7,7 @@ from PyQt6.QtCore import pyqtSignal, pyqtSlot
 from src.core.app_settings import OperationType
 from src.core.base_signals import BaseSlots
 from src.core.curve_fitting import CurveFitting as cft
+from src.core.log_aggregator import operation
 from src.core.logger_config import logger
 from src.core.logger_console import LoggerConsole as console
 
@@ -158,6 +159,7 @@ class CalculationsDataOperations(BaseSlots):
         logger.info("Reaction parameters updated successfully.")
         console.log("Reaction parameters have been updated based on the best combination found.")
 
+    @operation("ADD_REACTION")
     def add_reaction(self, path_keys: list, _params: dict):
         """
         Add a new reaction to the calculations data and plot its initial curves.
@@ -190,6 +192,7 @@ class CalculationsDataOperations(BaseSlots):
             logger.error(f"Differential data check failed for file: {file_name}. Cannot add reaction.")
             console.log(f"Failed to add reaction '{reaction_name}' due to missing differential data in '{file_name}'.")
 
+    @operation("REMOVE_REACTION")
     def remove_reaction(self, path_keys: list, _params: dict):
         """
         Remove a reaction from the calculations data.
@@ -324,6 +327,7 @@ class CalculationsDataOperations(BaseSlots):
         except ValueError as e:
             logger.error(f"Unexpected error updating data at {path_keys}: {str(e)}")
 
+    @operation("DECONVOLUTION")
     def deconvolution(self, path_keys: list[str], params: dict):
         """
         Prepare and return data required for deconvolution, including reaction variables,
