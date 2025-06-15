@@ -101,7 +101,7 @@ class OperationTableFormatter:
         start_time = datetime.fromtimestamp(operation_log.start_time or time.time())
         timestamp_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
 
-        return f'Операция "{operation_log.operation_name}" – НАЧАЛО (id={operation_id}, {timestamp_str})'
+        return f'Operation "{operation_log.operation_name}" – STARTED (id={operation_id}, {timestamp_str})'
 
     def _format_sub_operations_table(self, sub_operations: List[SubOperationLog]) -> str:
         """
@@ -114,16 +114,14 @@ class OperationTableFormatter:
             str: Formatted table string
         """
         if not sub_operations:
-            return "No sub-operations to display."
-
-        # Define table headers
+            return "No sub-operations to display."  # Define table headers
         headers = [
-            "Шаг",  # Step number
-            "Подоперация",  # Sub-operation name
-            "Цель",  # Target
-            "Тип данных результата",  # Result data type
-            "Статус",  # Status (OK/Error)
-            "Время, с",  # Duration in seconds
+            "Step",  # Step number
+            "Sub-operation",  # Sub-operation name
+            "Target",  # Target
+            "Result data type",  # Result data type
+            "Status",  # Status (OK/Error)
+            "Time, s",  # Duration in seconds
         ]
 
         # Build table data
@@ -163,17 +161,15 @@ class OperationTableFormatter:
         total_steps = operation_log.sub_operations_count
         successful_steps = operation_log.successful_sub_operations_count
         failed_steps = operation_log.failed_sub_operations_count
-        total_time = (operation_log.duration_ms or 0) / 1000  # Convert to seconds
-
-        # Format statistics line
+        total_time = (operation_log.duration_ms or 0) / 1000  # Convert to seconds        # Format statistics line
         stats_line = (
-            f"ИТОГО: шагов {total_steps}, успешно {successful_steps}, "
-            f"с ошибками {failed_steps}, общее время {total_time:.3f} с."
+            f"SUMMARY: steps {total_steps}, successful {successful_steps}, "
+            f"with errors {failed_steps}, total time {total_time:.3f} s."
         )
 
         # Format completion line with status
-        status_text = "успешно" if operation_log.status == "success" else "с ошибкой"
-        completion_line = f'Операция "{operation_log.operation_name}" – ЗАВЕРШЕНО (статус: {status_text})'
+        status_text = "successful" if operation_log.status == "success" else "with error"
+        completion_line = f'Operation "{operation_log.operation_name}" – COMPLETED (status: {status_text})'
 
         return f"{stats_line}\n{completion_line}"
 
@@ -190,7 +186,7 @@ class OperationTableFormatter:
         # Truncate very long error messages
         truncated_error = self._truncate_text(exception_info, 200)
 
-        return f"ОШИБКА: {truncated_error}"
+        return f"ERROR: {truncated_error}"
 
     def _format_simple_table(self, headers: List[str], table_data: List[List]) -> str:
         """
