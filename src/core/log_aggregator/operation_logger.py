@@ -17,6 +17,7 @@ import time
 from typing import Any, Callable, Optional, TypeVar
 
 from ..logger_config import LoggerManager
+from .aggregated_operation_logger import get_aggregated_logger
 from .operation_log import OperationLog
 from .sub_operation_log import SubOperationLog
 from .table_formatter import format_operation_log
@@ -156,14 +157,18 @@ class OperationLogger:
             f"Operation '{self.current_operation.operation_name}' completed "
             f"with status '{status}' in {duration:.2f}ms. "
             f"Sub-operations: {sub_op_count} total, {successful_count} successful, {failed_count} failed"
-        )
-
-        # Format and output the aggregated operation log
+        )  # Log to aggregated operations file using the new AggregatedOperationLogger
         try:
-            formatted_log = format_operation_log(self.current_operation)
-            logger.info(f"Aggregated operation log:\n{formatted_log}")
+            aggregated_logger = get_aggregated_logger()
+            aggregated_logger.log_operation(self.current_operation)
         except Exception as e:
-            logger.error(f"Failed to format operation log: {e}")
+            logger.error(f"Failed to write aggregated operation log: {e}")
+            # Fallback to old behavior for debugging
+            try:
+                formatted_log = format_operation_log(self.current_operation)
+                logger.info(f"Aggregated operation log:\n{formatted_log}")
+            except Exception as e2:
+                logger.error(f"Failed to format operation log: {e2}")
 
         self.current_operation = None
 
