@@ -9,14 +9,17 @@ Key components:
 - Table structure with columns: Step, Sub-operation, Target, Data Type, Status, Duration
 - Operation header and summary formatting
 - Error handling and edge cases support
+- Meta-operations support with configurable grouping and visualization
 """
 
 import time
 from datetime import datetime
-from typing import List
+from typing import Dict, List
 
 from tabulate import tabulate
 
+from .formatter_config import FormatterConfig
+from .meta_operation import MetaOperation
 from .operation_log import OperationLog
 from .sub_operation_log import SubOperationLog
 
@@ -29,10 +32,12 @@ class OperationTableFormatter:
     - Operation headers with unique IDs and timestamps
     - Sub-operations table with proper column alignment
     - Operation summary with statistics
-    - Error blocks for operations with failures"""
+    - Error blocks for operations with failures
+    - Meta-operations grouping and visualization"""
 
     def __init__(
         self,
+        config: FormatterConfig = None,
         table_format: str = "grid",
         max_cell_width: int = 50,
         include_error_details: bool = True,
@@ -42,14 +47,27 @@ class OperationTableFormatter:
         Initialize the table formatter.
 
         Args:
+            config: FormatterConfig instance for meta-operations support
             table_format: Tabulate table format (grid, plain, simple, etc.)
             max_cell_width: Maximum width for table cells to prevent overly wide output
             include_error_details: Whether to include detailed error blocks
             max_error_context_items: Maximum number of context items to display"""
-        self.table_format = table_format
-        self.max_cell_width = max_cell_width
-        self.include_error_details = include_error_details
-        self.max_error_context_items = max_error_context_items
+
+        # Use config if provided, otherwise create default with legacy parameters
+        if config is not None:
+            self.config = config
+        else:
+            self.config = FormatterConfig(
+                table_format=table_format,
+                max_cell_width=max_cell_width,
+                include_error_details=include_error_details,
+                max_error_context_items=max_error_context_items,
+            )
+        # Legacy compatibility
+        self.table_format = self.config.table_format
+        self.max_cell_width = self.config.max_cell_width
+        self.include_error_details = self.config.include_error_details
+        self.max_error_context_items = self.config.max_error_context_items
         self._operation_counter = 0  # Simple counter for unique operation IDs
 
     def format_operation_log(self, operation_log: OperationLog) -> str:
@@ -77,38 +95,33 @@ class OperationTableFormatter:
         # 2. Operation header
         header = self._format_operation_header(operation_log, operation_id)
         parts.append(header)
-        parts.append("")  # Empty line        # 3. Meta-operations summary (if available)
-        if hasattr(operation_log, "meta_operations") and operation_log.meta_operations:
-            meta_summary = self._format_meta_operations_summary(operation_log.meta_operations)
-            parts.append(meta_summary)
-            parts.append("")  # Empty line
-
-        # 4. Sub-operations table
+        parts.append("")  # Empty line        # 3. Sub-operations table (with meta-operations support)
         if operation_log.sub_operations:
-            table = self._format_sub_operations_table(operation_log.sub_operations)
+            if (
+                self.config.group_meta_operations
+                and hasattr(operation_log, "meta_operations")
+                and operation_log.meta_operations
+            ):
+                # Format with meta-operations grouping
+                table = self._format_with_meta_operations(operation_log)
+            else:
+                # Traditional flat formatting
+                table = self._format_flat_table(operation_log)
             parts.append(table)
         else:
             parts.append("No sub-operations recorded.")
         parts.append("")  # Empty line
 
-        # 4. Error details block (NEW)
-        if self.include_error_details:
+        # 4. Error details block
+        if self.config.include_error_details:
             error_block = self._format_error_details_block(operation_log)
             if error_block:
                 parts.append(error_block)
-                parts.append("")  # Empty line
-
-        # 5. Main operation error block (if operation failed)
-        if operation_log.status == "error" and operation_log.exception_info:
-            main_error_block = self._format_error_block(operation_log.exception_info)
-            parts.append(main_error_block)
-            parts.append("")  # Empty line
-
-        # 6. Operation summary
+                parts.append("")  # Empty line        # 5. Summary section
         summary = self._format_operation_summary(operation_log, operation_id)
         parts.append(summary)
 
-        # 7. Footer separator
+        # 6. Footer separator
         parts.append("=" * 80)
 
         return "\n".join(parts) + "\n"
@@ -185,10 +198,23 @@ class OperationTableFormatter:
         total_steps = operation_log.sub_operations_count
         successful_steps = operation_log.successful_sub_operations_count
         failed_steps = operation_log.failed_sub_operations_count
-        total_time = (operation_log.duration_ms or 0) / 1000  # Convert to seconds        # Format statistics line
+        total_time = (operation_log.duration_ms or 0) / 1000  # Convert to seconds
+
+        # Check for meta-operations
+        meta_ops_info = ""
+        if (
+            self.config.group_meta_operations
+            and hasattr(operation_log, "meta_operations")
+            and operation_log.meta_operations
+        ):
+            meta_count = len(operation_log.meta_operations)
+            grouped_ops = sum(len(meta_op.sub_operations) for meta_op in operation_log.meta_operations)
+            meta_ops_info = f", meta-operations {meta_count}, grouped {grouped_ops}/{total_steps} ops"
+
+        # Format statistics line
         stats_line = (
             f"SUMMARY: steps {total_steps}, successful {successful_steps}, "
-            f"with errors {failed_steps}, total time {total_time:.3f} s."
+            f"with errors {failed_steps}, total time {total_time:.3f} s{meta_ops_info}."
         )
 
         # Format completion line with status
@@ -414,6 +440,244 @@ class OperationTableFormatter:
             "latex_booktabs",
             "textile",
         ]
+
+    def set_output_mode(self, mode: str) -> None:
+        """
+        Dynamically change output mode for meta-operations formatting.
+
+        Args:
+            mode: Output mode name (compact, expanded, debug, minimal)
+        """
+        from .formatter_config import MODE_CONFIGS
+
+        if mode in MODE_CONFIGS:
+            mode_settings = MODE_CONFIGS[mode]
+            for key, value in mode_settings.items():
+                if hasattr(self.config, key):
+                    setattr(self.config, key, value)
+
+    def _format_with_meta_operations(self, operation_log: OperationLog) -> str:
+        """
+        Format operation log table with meta-operations grouping.
+
+        Args:
+            operation_log: The OperationLog instance with meta_operations
+
+        Returns:
+            str: Formatted table with grouped meta-operations
+        """
+        # Determine operations that are grouped in meta-operations
+        grouped_operations = set()
+        for meta_op in operation_log.meta_operations:
+            grouped_operations.update(op.step_number for op in meta_op.sub_operations)
+
+        # Collect table rows
+        table_rows = []
+
+        # Add meta-operations
+        for meta_op in operation_log.meta_operations:
+            table_rows.extend(self._format_meta_operation_rows(meta_op))
+
+        # Add ungrouped operations
+        for sub_op in operation_log.sub_operations:
+            if sub_op.step_number not in grouped_operations:
+                table_rows.append(self._format_single_operation_row(sub_op))
+
+        # Sort by start time
+        table_rows.sort(key=lambda row: row.get("start_time", 0))
+
+        # Build final table
+        return self._build_table_from_rows(table_rows)
+
+    def _format_flat_table(self, operation_log: OperationLog) -> str:
+        """
+        Format operation log in traditional flat table format.
+
+        Args:
+            operation_log: The OperationLog instance
+
+        Returns:
+            str: Formatted flat table
+        """
+        return self._format_sub_operations_table(operation_log.sub_operations)
+
+    def _format_meta_operation_rows(self, meta_op: MetaOperation) -> List[Dict]:
+        """
+        Format rows for a single meta-operation.
+
+        Args:
+            meta_op: MetaOperation instance to format
+
+        Returns:
+            List[Dict]: List of table row dictionaries
+        """
+        rows = []
+
+        if self.config.compact_meta_view:
+            # Compact representation
+            rows.append(self._create_meta_operation_summary_row(meta_op))
+
+            # Individual operations details (optional)
+            if self.config.show_individual_ops and len(meta_op.sub_operations) <= self.config.max_operations_inline:
+                for sub_op in meta_op.sub_operations:
+                    rows.append(self._create_indented_operation_row(sub_op))
+
+        else:
+            # Expanded representation
+            rows.append(self._create_meta_operation_header_row(meta_op))
+            for i, sub_op in enumerate(meta_op.sub_operations):
+                is_last = i == len(meta_op.sub_operations) - 1
+                rows.append(self._create_indented_operation_row(sub_op, is_last))
+
+        return rows
+
+    def _create_meta_operation_summary_row(self, meta_op: MetaOperation) -> Dict:
+        """
+        Create summary row for meta-operation.
+
+        Args:
+            meta_op: MetaOperation instance
+
+        Returns:
+            Dict: Row data for summary representation
+        """
+        # Handle empty meta-operations
+        if not meta_op.sub_operations:
+            return {
+                "Step": "?",
+                "Sub-operation": f"{self.config.meta_operation_symbol} {meta_op.name}",
+                "Target": "unknown",
+                "Result data type": "unknown",
+                "Status": "Empty",
+                "Time, s": 0.0,
+            }
+
+        # Get first step number in group
+        first_step = min(op.step_number for op in meta_op.sub_operations)
+
+        # Aggregate data
+        targets = list({op.target for op in meta_op.sub_operations})
+        data_types = list({op.data_type for op in meta_op.sub_operations})
+        statuses = list({op.status for op in meta_op.sub_operations})
+
+        # Create summaries
+        target_summary = targets[0] if len(targets) == 1 else "mixed"
+        data_type_summary = data_types[0] if len(data_types) == 1 else "mixed"
+        status_summary = statuses[0] if len(statuses) == 1 else "mixed"
+
+        # Meta-operation symbol
+        symbol = self.config.meta_operation_symbol
+
+        return {
+            "step": f"{symbol} {first_step}",
+            "sub_operation": meta_op.description,
+            "target": target_summary[:10] + "." if len(target_summary) > 10 else target_summary,
+            "result_data_type": data_type_summary,
+            "status": status_summary,
+            "time": f"{meta_op.total_execution_time:.3f}" if meta_op.total_execution_time else "0.000",
+            "start_time": meta_op.start_time or 0,
+        }
+
+    def _create_meta_operation_header_row(self, meta_op: MetaOperation) -> Dict:
+        """
+        Create header row for expanded meta-operation view.
+
+        Args:
+            meta_op: MetaOperation instance
+
+        Returns:
+            Dict: Row data for header representation
+        """
+        first_step = min(op.step_number for op in meta_op.sub_operations)
+        symbol = "◣"  # Expanded view symbol
+
+        return {
+            "step": f"{symbol} {first_step}",
+            "sub_operation": f"◣ {meta_op.description}",
+            "target": meta_op.get_targets_summary(),
+            "result_data_type": meta_op.get_data_types_summary(),
+            "status": meta_op.get_status_summary(),
+            "time": f"{meta_op.total_execution_time:.3f}" if meta_op.total_execution_time else "0.000",
+            "start_time": meta_op.start_time or 0,
+        }
+
+    def _create_indented_operation_row(self, sub_op: SubOperationLog, is_last: bool = False) -> Dict:
+        """
+        Create indented row for individual operation within meta-operation.
+
+        Args:
+            sub_op: SubOperationLog instance
+            is_last: Whether this is the last operation in the group
+
+        Returns:
+            Dict: Row data for indented representation
+        """
+        indent = " " * self.config.indent_size
+        branch_symbol = "└" if is_last else "├"
+
+        return {
+            "step": f"{indent}{branch_symbol}",
+            "sub_operation": sub_op.operation_name,
+            "target": sub_op.target,
+            "result_data_type": sub_op.data_type,
+            "status": sub_op.status,
+            "time": f"{sub_op.execution_time:.3f}" if sub_op.execution_time else "0.000",
+            "start_time": sub_op.start_time,
+        }
+
+    def _format_single_operation_row(self, sub_op: SubOperationLog) -> Dict:
+        """
+        Format a single operation that's not part of any meta-operation.
+
+        Args:
+            sub_op: SubOperationLog instance
+
+        Returns:
+            Dict: Row data for single operation
+        """
+        return {
+            "step": str(sub_op.step_number),
+            "sub_operation": sub_op.operation_name,
+            "target": sub_op.target,
+            "result_data_type": sub_op.data_type,
+            "status": sub_op.status,
+            "time": f"{sub_op.execution_time:.3f}" if sub_op.execution_time else "0.000",
+            "start_time": sub_op.start_time,
+        }
+
+    def _build_table_from_rows(self, table_rows: List[Dict]) -> str:
+        """
+        Build final table from prepared row data.
+
+        Args:
+            table_rows: List of row dictionaries
+
+        Returns:
+            str: Formatted table string
+        """
+        if not table_rows:
+            return "No operations recorded."
+
+        # Prepare data for tabulate
+        headers = ["Step", "Sub-operation", "Target", "Result data type", "Status", "Time, s"]
+
+        table_data = []
+        for row in table_rows:
+            table_data.append(
+                [row["step"], row["sub_operation"], row["target"], row["result_data_type"], row["status"], row["time"]]
+            )
+
+        # Format table
+        try:
+            return tabulate(
+                table_data,
+                headers=headers,
+                tablefmt=self.config.table_format,
+                maxcolwidths=[8, self.config.max_cell_width, 10, 20, 10, 11],
+            )
+        except Exception:
+            # Fallback to simple format
+            return self._format_simple_table(table_data, headers)
 
 
 # Global formatter instance for use across the module

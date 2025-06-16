@@ -1,7 +1,10 @@
 import logging
 import logging.handlers
 from pathlib import Path
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
+
+if TYPE_CHECKING:
+    from .log_aggregator.formatter_config import FormatterConfig
 
 
 class LoggerManager:
@@ -198,11 +201,65 @@ META_OPERATION_CONFIG = {
             "enabled": False,  # Disable for now
             "config": {"freq_threshold": 5, "freq_window_ms": 1000.0},
         },
-    },
-    # Formatting settings for meta-operations display
+    },  # Formatting settings for meta-operations display
     "formatting": {
-        "compact_view": True,  # Compact display of meta-operations
-        "show_individual_ops": False,  # Whether to show individual operations within groups
-        "max_operations_inline": 5,  # Maximum operations to show inline before collapsing
+        "group_meta_operations": True,  # Include grouping in output
+        "compact_meta_view": True,  # Compact display
+        "show_individual_ops": False,  # Show operations within groups
+        "max_operations_inline": 5,  # Maximum operations inline
+        "meta_operation_symbol": "►",  # Symbol for meta-operations
+        "indent_size": 2,  # Indent size for nested operations
+        # Additional options
+        "show_meta_statistics": True,  # Show statistics for groups
+        "highlight_errors": True,  # Highlight errors in groups
+        "time_precision": 3,  # Time precision (decimal places)
+        # Output modes configuration
+        "output_modes": {
+            "default": "compact",  # Default mode
+            "debug": "expanded",  # Debug mode
+            "json": False,  # Additional JSON output
+        },
+    },
+    # Display filters
+    "display_filters": {
+        "min_group_size": 2,  # Minimum group size for display
+        "max_group_size": 50,  # Maximum size for expanded display
+        "hide_successful_groups": False,  # Hide fully successful groups
+        "hide_single_operations": False,  # Hide single operations
     },
 }
+
+
+def create_formatter_config_from_meta_config() -> "FormatterConfig":
+    """
+    Create FormatterConfig instance from META_OPERATION_CONFIG.
+
+    Returns:
+        FormatterConfig: Configured instance based on META_OPERATION_CONFIG
+    """
+    from .log_aggregator.formatter_config import FormatterConfig
+
+    formatting_config = META_OPERATION_CONFIG.get("formatting", {})
+    display_filters = META_OPERATION_CONFIG.get("display_filters", {})
+
+    return FormatterConfig(
+        # Basic parameters
+        table_format="grid",
+        max_cell_width=50,
+        include_error_details=True,
+        max_error_context_items=5,
+        # Meta-operations parameters from config
+        group_meta_operations=formatting_config.get("group_meta_operations", True),
+        compact_meta_view=formatting_config.get("compact_meta_view", True),
+        show_individual_ops=formatting_config.get("show_individual_ops", False),
+        max_operations_inline=formatting_config.get("max_operations_inline", 5),
+        meta_operation_symbol=formatting_config.get("meta_operation_symbol", "►"),
+        indent_size=formatting_config.get("indent_size", 2),
+        # Additional options
+        show_meta_statistics=formatting_config.get("show_meta_statistics", True),
+        highlight_errors=formatting_config.get("highlight_errors", True),
+        time_precision=formatting_config.get("time_precision", 3),
+        # Output modes and display filters
+        output_modes=formatting_config.get("output_modes", {}),
+        display_filters=display_filters,
+    )

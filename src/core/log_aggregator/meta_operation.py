@@ -23,38 +23,33 @@ class MetaOperation:
     """
 
     meta_id: str  # Unique identifier for this meta-operation
-    strategy_name: str  # Name of the detection strategy that created this group
+    strategy_name: str = "unknown"  # Name of the clustering strategy used
     description: str = ""  # Human-readable description of the meta-operation
     sub_operations: List[SubOperationLog] = field(default_factory=list)
-    start_time: Optional[float] = None  # Start time of first operation in group
-    end_time: Optional[float] = None  # End time of last operation in group
-    execution_time: Optional[float] = None  # Total execution time of the group
-
-    def __post_init__(self):
-        """Calculate timing information from sub-operations."""
-        self.calculate_metrics()
-
-    def calculate_metrics(self) -> None:
-        """Calculate timing and performance metrics from sub-operations."""
-        if not self.sub_operations:
-            return
-
-        # Calculate timing metrics
-        self.start_time = min(sub_op.start_time for sub_op in self.sub_operations if sub_op.start_time is not None)
-
-        # Calculate end time from operations that have completed
-        completed_ops = [sub_op for sub_op in self.sub_operations if sub_op.end_time is not None]
-        if completed_ops:
-            self.end_time = max(sub_op.end_time for sub_op in completed_ops)
-            if self.start_time is not None and self.end_time is not None:
-                self.execution_time = self.end_time - self.start_time
+    start_time: Optional[float] = None  # Start timestamp
+    end_time: Optional[float] = None  # End timestamp
+    cluster_type: str = "unknown"  # Type of clustering used (temporal, semantic, etc.)
+    cluster_parameters: dict = field(default_factory=dict)  # Parameters used for clustering
 
     @property
-    def duration_ms(self) -> Optional[float]:
-        """Get execution duration in milliseconds."""
+    def name(self) -> str:
+        """Get the name/description for this meta-operation."""
+        return self.description if self.description else self.strategy_name
+
+    @property
+    def execution_time(self) -> Optional[float]:
+        """Get the total execution time of this meta-operation in seconds."""
+        if self.start_time is not None and self.end_time is not None:
+            return self.end_time - self.start_time
+        return None
+
+    @property
+    def duration_ms(self) -> float:
+        """Get the total execution time in milliseconds."""
         if self.execution_time is not None:
             return self.execution_time * 1000
-        return None
+        # Fallback: sum of individual operation times
+        return sum(op.duration for op in self.sub_operations if op.duration is not None)
 
     @property
     def operations_count(self) -> int:
@@ -85,3 +80,39 @@ class MetaOperation:
             f"{self.successful_operations_count} successful, "
             f"{self.duration_ms:.1f}ms"
         )
+
+    def get_targets_summary(self) -> str:
+        """Get a summary of targets involved in this meta-operation."""
+        targets = list({op.target for op in self.sub_operations})
+
+        if len(targets) == 1:
+            return targets[0]
+        elif len(targets) <= 3:
+            return ", ".join(targets)
+        else:
+            return f"{targets[0]}, ... (+{len(targets)-1})"
+
+    def get_data_types_summary(self) -> str:
+        """Get a summary of data types returned by operations in this group."""
+        data_types = sorted({op.data_type for op in self.sub_operations})
+
+        if len(data_types) == 1:
+            return data_types[0]
+        elif len(data_types) <= 3:
+            return ", ".join(data_types)
+        else:
+            return "mixed"
+
+    def get_status_summary(self) -> str:
+        """Get a summary status for this meta-operation."""
+        if self.failed_operations_count == 0:
+            return "OK"
+        elif self.successful_operations_count == 0:
+            return "Error"
+        else:
+            return "Mixed"
+
+    @property
+    def total_execution_time(self) -> Optional[float]:
+        """Get total execution time for all operations in the group."""
+        return self.execution_time
