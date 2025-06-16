@@ -55,16 +55,15 @@ class AggregatedOperationLogger:
         # Initialize meta-operation detection
         from .meta_operation_config import get_default_detector
 
-        self._meta_detector = get_default_detector()
-
-        # Initialize the aggregated logger
+        self._meta_detector = get_default_detector()  # Initialize the aggregated logger
         self._setup_aggregated_logger()
 
     def _setup_aggregated_logger(self) -> None:
         """Set up the aggregated operations logger with separate file handler."""
         try:
             # Get or create the aggregated operations logger
-            self._aggregated_logger = logging.getLogger(self._logger_name)
+            logger_name = "aggregated_operations"
+            self._aggregated_logger = logging.getLogger(logger_name)
             self._aggregated_logger.setLevel(logging.INFO)
 
             # Clear any existing handlers to avoid duplicates

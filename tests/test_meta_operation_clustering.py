@@ -93,7 +93,7 @@ def test_name_similarity_clustering():
     """Test name similarity clustering strategy."""
     print("Testing Name Similarity Clustering...")
 
-    strategy = NameSimilarityStrategy(prefix_min_length=3, min_group_size=2)
+    strategy = NameSimilarityStrategy(prefix_length=3)
     operation_log = create_test_operation_log()
 
     detector = MetaOperationDetector([strategy])

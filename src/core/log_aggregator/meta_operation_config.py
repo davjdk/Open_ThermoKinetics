@@ -7,7 +7,15 @@ including strategy registration, parameter configuration, and factory methods.
 
 from typing import Any, Dict, List, Optional, Type
 
-from .detection_strategies import NameSimilarityStrategy, TargetSimilarityStrategy, TimeWindowClusterStrategy
+from .detection_strategies import (
+    FrequencyThresholdStrategy,
+    NameSimilarityStrategy,
+    RequestParametersStrategy,
+    SequenceCountStrategy,
+    TargetClusterStrategy,
+    TargetSimilarityStrategy,
+    TimeWindowClusterStrategy,
+)
 from .meta_operation_detector import MetaOperationDetector, MetaOperationStrategy
 
 
@@ -17,13 +25,16 @@ class MetaOperationConfig:
 
     This class handles registration of available strategies, configuration
     of strategy parameters, and factory methods for creating detectors.
-    """
+    """  # Registry of available strategy classes
 
-    # Registry of available strategy classes
     STRATEGY_REGISTRY: Dict[str, Type[MetaOperationStrategy]] = {
         "time_window": TimeWindowClusterStrategy,
         "name_similarity": NameSimilarityStrategy,
         "target_similarity": TargetSimilarityStrategy,
+        "request_parameters": RequestParametersStrategy,
+        "sequence_count": SequenceCountStrategy,
+        "frequency_threshold": FrequencyThresholdStrategy,
+        "target_cluster": TargetClusterStrategy,
     }
 
     # Default configuration for each strategy
@@ -32,11 +43,148 @@ class MetaOperationConfig:
             "time_window_ms": 50.0,
         },
         "name_similarity": {
-            "prefix_min_length": 3,
-            "min_group_size": 2,
+            "name_pattern": "GET_.*|SET_.*|UPDATE_.*",
+            "prefix_length": 3,
+            "case_sensitive": False,
         },
         "target_similarity": {
             "min_sequence_length": 2,
+        },
+        "request_parameters": {
+            "target_grouping": True,
+            "kwargs_similarity": 0.7,
+            "ignore_params": ["timestamp", "request_id"],
+        },
+        "sequence_count": {
+            "min_sequence": 3,
+            "operation_types": [],
+            "status_filter": ["OK", "Error"],
+        },
+        "frequency_threshold": {
+            "freq_threshold": 5,
+            "freq_window_ms": 1000,
+            "operation_whitelist": [],
+        },
+        "target_cluster": {
+            "target_list": ["file_data", "series_data", "calculation_data"],
+            "max_gap": 1,
+            "strict_sequence": False,
+            "min_cluster_size": 2,
+        },
+    }
+
+    # Predefined strategy configurations based on technical specification
+    PRESET_CONFIGS = {
+        "basic_time_grouping": {
+            "strategies": [
+                {
+                    "name": "time_window",
+                    "priority": 1,
+                    "params": {
+                        "time_window_ms": 50,
+                    },
+                }
+            ]
+        },
+        "enhanced_clustering": {
+            "strategies": [
+                {
+                    "name": "time_window",
+                    "priority": 1,
+                    "params": {
+                        "time_window_ms": 50,
+                    },
+                },
+                {
+                    "name": "target_cluster",
+                    "priority": 2,
+                    "params": {
+                        "target_list": ["file_data", "series_data", "calculation_data"],
+                        "max_gap": 1,
+                        "strict_sequence": False,
+                        "min_cluster_size": 2,
+                    },
+                },
+                {
+                    "name": "name_similarity",
+                    "priority": 3,
+                    "params": {
+                        "name_pattern": "GET_.*|SET_.*|UPDATE_.*",
+                        "prefix_length": 3,
+                        "case_sensitive": False,
+                    },
+                },
+            ]
+        },
+        "full_detection": {
+            "strategies": [
+                {
+                    "name": "time_window",
+                    "priority": 1,
+                    "params": {
+                        "time_window_ms": 100,
+                    },
+                },
+                {
+                    "name": "target_cluster",
+                    "priority": 2,
+                    "params": {
+                        "target_list": ["file_data", "series_data", "calculation_data"],
+                        "max_gap": 2,
+                        "strict_sequence": False,
+                        "min_cluster_size": 2,
+                    },
+                },
+                {
+                    "name": "name_similarity",
+                    "priority": 3,
+                    "params": {
+                        "name_pattern": "GET_.*|SET_.*|UPDATE_.*|LOAD_.*|SAVE_.*",
+                        "prefix_length": 3,
+                        "case_sensitive": False,
+                    },
+                },
+                {
+                    "name": "sequence_count",
+                    "priority": 4,
+                    "params": {
+                        "min_sequence": 3,
+                        "operation_types": [],
+                        "status_filter": ["OK", "Error"],
+                    },
+                },
+                {
+                    "name": "frequency_threshold",
+                    "priority": 5,
+                    "params": {
+                        "freq_threshold": 5,
+                        "freq_window_ms": 1000,
+                        "operation_whitelist": ["GET_VALUE", "SET_VALUE", "UPDATE_VALUE"],
+                    },
+                },
+            ]
+        },
+        "performance_focused": {
+            "strategies": [
+                {
+                    "name": "sequence_count",
+                    "priority": 1,
+                    "params": {
+                        "min_sequence": 4,
+                        "operation_types": ["GET_VALUE", "SET_VALUE", "UPDATE_VALUE"],
+                        "status_filter": ["OK"],
+                    },
+                },
+                {
+                    "name": "frequency_threshold",
+                    "priority": 2,
+                    "params": {
+                        "freq_threshold": 7,
+                        "freq_window_ms": 500,
+                        "operation_whitelist": ["GET_VALUE", "SET_VALUE"],
+                    },
+                },
+            ]
         },
     }
 
@@ -218,6 +366,57 @@ class MetaOperationConfig:
             strategies_dict[strategy_name] = {"enabled": is_enabled, "config": config}
 
         return {"enabled": self._global_enabled, "strategies": strategies_dict}
+
+    def apply_preset_config(self, preset_name: str) -> bool:
+        """
+        Apply a predefined configuration preset.
+
+        Args:
+            preset_name: Name of the preset configuration to apply
+
+        Returns:
+            bool: True if preset was applied successfully
+        """
+        if preset_name not in self.PRESET_CONFIGS:
+            return False
+
+        preset = self.PRESET_CONFIGS[preset_name]
+
+        # Clear current configuration
+        self._enabled_strategies.clear()
+        self._strategy_configs.clear()
+
+        # Apply preset strategies in priority order
+        strategies = sorted(preset["strategies"], key=lambda x: x.get("priority", 999))
+
+        for strategy_config in strategies:
+            strategy_name = strategy_config["name"]
+            params = strategy_config.get("params", {})
+
+            self.enable_strategy(strategy_name, params)
+
+        return True
+
+    def get_available_presets(self) -> List[str]:
+        """
+        Get list of available preset configuration names.
+
+        Returns:
+            List of preset names
+        """
+        return list(self.PRESET_CONFIGS.keys())
+
+    def get_preset_description(self, preset_name: str) -> Optional[Dict[str, Any]]:
+        """
+        Get description of a preset configuration.
+
+        Args:
+            preset_name: Name of the preset
+
+        Returns:
+            Dict containing preset configuration or None if not found
+        """
+        return self.PRESET_CONFIGS.get(preset_name)
 
 
 # Create a global configuration instance
