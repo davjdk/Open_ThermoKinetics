@@ -213,6 +213,7 @@ class CalculationsDataOperations(BaseSlots):
             logger.debug(f"Removed reaction {reaction_name} for file {file_name}.")
             console.log(f"Reaction '{reaction_name}' was successfully removed from file '{file_name}'.")
 
+    @operation("HIGHLIGHT_REACTION")
     def highlight_reaction(self, path_keys: list, _params: dict):
         """
         Highlight the selected reaction by plotting individual reaction curves and cumulative curves.
@@ -265,6 +266,7 @@ class CalculationsDataOperations(BaseSlots):
                 self.plot_reaction.emit((file_name, f"cumulative_{bound_label}"), [x, y])
             logger.info("Cumulative curves have been plotted.")
 
+    @operation("UPDATE_COEFFS")
     def _update_coeffs_value(self, path_keys: list[str], new_value):
         """
         Update the middle 'coeffs' value based on changes in 'upper_bound_coeffs' or
@@ -299,6 +301,7 @@ class CalculationsDataOperations(BaseSlots):
                 else:
                     logger.error(f"No data found at {new_keys} for updating coeffs.")
 
+    @operation("UPDATE_VALUE")
     def update_value(self, path_keys: list[str], params: dict):
         """
         Update a specific value in the calculations data.

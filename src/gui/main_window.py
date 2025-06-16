@@ -6,6 +6,7 @@ from PyQt6.QtWidgets import QMainWindow, QTabWidget
 
 from src.core.app_settings import OperationType
 from src.core.base_signals import BaseSignals, BaseSlots
+from src.core.log_aggregator import operation
 from src.core.logger_config import logger
 from src.core.logger_console import LoggerConsole as console
 from src.gui.main_tab.main_tab import MainTab
@@ -148,6 +149,7 @@ class MainWindow(QMainWindow):
         self.main_tab.sub_sidebar.deconvolution_sub_bar.calc_buttons.revert_to_default()
         return True
 
+    @operation("MODEL_FREE_CALCULATION")
     def _handle_model_free_calculation(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
@@ -186,6 +188,7 @@ class MainWindow(QMainWindow):
         )
         self.main_tab.sub_sidebar.model_free_sub_bar.update_fit_results(fit_results)
 
+    @operation("PLOT_MODEL_FIT_RESULT")
     def _handle_plot_model_fit_result(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
@@ -223,6 +226,7 @@ class MainWindow(QMainWindow):
             plot_data_and_kwargs[0]["plot_kwargs"]["annotation"] = is_annotate
         self.main_tab.plot_canvas.plot_model_fit_result(plot_data_and_kwargs)
 
+    @operation("PLOT_MODEL_FREE_RESULT")
     def _handle_plot_model_free_result(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
@@ -278,6 +282,7 @@ class MainWindow(QMainWindow):
             return
         self.main_tab.sub_sidebar.model_fit_sub_bar.update_results_table(result_df)
 
+    @operation("MODEL_FIT_CALCULATION")
     def _handle_model_fit_calculation(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
@@ -314,6 +319,7 @@ class MainWindow(QMainWindow):
         )
         self.main_tab.sub_sidebar.model_fit_sub_bar.update_fit_results(fit_results)
 
+    @operation("LOAD_DECONVOLUTION_RESULTS")
     def _handle_load_deconvolution_results(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
@@ -332,6 +338,7 @@ class MainWindow(QMainWindow):
             logger.error(f"Failed to update deconvolution results for series '{series_name}'.")
         self._handle_select_series(params)
 
+    @operation("SELECT_SERIES")
     def _handle_select_series(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
@@ -365,6 +372,7 @@ class MainWindow(QMainWindow):
         self.main_tab.sub_sidebar.model_based.update_calculation_settings(calculation_settings)
         self.main_tab.sub_sidebar.series_sub_bar.update_series_ui(series_df, deconvolution_results)
 
+    @operation("MODEL_PARAMS_CHANGE")
     def _handle_model_params_change(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
@@ -388,6 +396,7 @@ class MainWindow(QMainWindow):
         if params.get("is_calculate"):
             self.update_model_simulation(series_name)
 
+    @operation("SCHEME_CHANGE")
     def _handle_scheme_change(self, params: dict):
         is_ok = self.handle_request_cycle("series_data", OperationType.SCHEME_CHANGE, **params)
         if not is_ok:
@@ -408,6 +417,7 @@ class MainWindow(QMainWindow):
         self.main_tab.sub_sidebar.model_based.update_scheme_data(scheme_data)
         self.update_model_simulation(series_name)
 
+    @operation("TO_A_T")
     def _handle_to_a_t(self, params):
         params["function"] = self.handle_request_cycle("active_file_operations", OperationType.TO_A_T)
         is_modifyed = self.handle_request_cycle("file_data", OperationType.TO_A_T, **params)
@@ -417,6 +427,7 @@ class MainWindow(QMainWindow):
         else:
             logger.error(f"{self.actor_name} no response in handle_request_from_main_tab")
 
+    @operation("DIFFERENTIAL")
     def _handle_differential(self, params):
         params["function"] = self.handle_request_cycle("active_file_operations", OperationType.TO_DTG)
         is_modifyed = self.handle_request_cycle("file_data", OperationType.TO_DTG, **params)
@@ -432,21 +443,25 @@ class MainWindow(QMainWindow):
             console.log("\n\nit is necessary to bring the data to da/dT.\nexperiments -> your experiment -> da/dT")
             self.main_tab.sub_sidebar.deconvolution_sub_bar.reactions_table.on_fail_add_reaction()
 
+    @operation("HIGHLIGHT_REACTION")
     def _handle_highlight_reaction(self, params):
         df = self.handle_request_cycle("file_data", OperationType.GET_DF_DATA, **params)
         self.main_tab.plot_canvas.plot_data_from_dataframe(df)
         is_ok = self.handle_request_cycle("calculations_data_operations", OperationType.HIGHLIGHT_REACTION, **params)
         logger.debug(f"{OperationType.HIGHLIGHT_REACTION=} {is_ok=}")
 
+    @operation("REMOVE_REACTION")
     def _handle_remove_reaction(self, params):
         is_ok = self.handle_request_cycle("calculations_data_operations", OperationType.REMOVE_REACTION, **params)
         logger.debug(f"{OperationType.REMOVE_REACTION=} {is_ok=}")
 
+    @operation("UPDATE_VALUE")
     def _handle_update_value(self, params):
         target = params.pop("target", "calculations_data_operations")
         is_ok = self.handle_request_cycle(target, OperationType.UPDATE_VALUE, **params)
         logger.debug(f"{OperationType.UPDATE_VALUE=} {is_ok=}")
 
+    @operation("RESET_FILE_DATA")
     def _handle_reset_file_data(self, params):
         is_ok = self.handle_request_cycle("file_data", OperationType.RESET_FILE_DATA, **params)
         df = self.handle_request_cycle("file_data", OperationType.GET_DF_DATA, **params)
@@ -457,6 +472,7 @@ class MainWindow(QMainWindow):
         data = self.handle_request_cycle("calculations_data", OperationType.IMPORT_REACTIONS, **params)
         self.main_tab.update_reactions_table(data)
 
+    @operation("EXPORT_REACTIONS")
     def _handle_export_reactions(self, params):
         data = self.handle_request_cycle("calculations_data", OperationType.GET_VALUE, **params)
         suggested_file_name = params["function"](params["file_name"], data)
@@ -471,6 +487,7 @@ class MainWindow(QMainWindow):
     def _handle_stop_calculation(self, params):
         _ = self.handle_request_cycle("calculations", OperationType.STOP_CALCULATION)
 
+    @operation("ADD_NEW_SERIES")
     def _handle_add_new_series(self, params):
         df_copies = self.handle_request_cycle("file_data", OperationType.GET_ALL_DATA, file_name="all_files")
         series_name, selected_files = self.main_tab.sidebar.open_add_series_dialog(df_copies)
@@ -532,6 +549,7 @@ class MainWindow(QMainWindow):
         is_ok = self.handle_request_cycle("series_data", OperationType.DELETE_SERIES, **params)
         logger.debug(f"{OperationType.DELETE_SERIES=} {is_ok=}")
 
+    @operation("MODEL_BASED_CALCULATION")
     def _handle_model_based_calculation(self, params: dict):
         series_name = params.get("series_name")
         if not series_name:
@@ -585,6 +603,7 @@ class MainWindow(QMainWindow):
             logger.error(f"MainWindow: Failed to update best values in ModelBasedTab: {e}")
             return {"success": False, "error": str(e)}
 
+    @operation("UPDATE_MODEL_SIMULATION")
     def update_model_simulation(self, series_name: str):
         """Update model simulation and plot simulation curves."""
         logger.debug(f"update_model_simulation called for series: {series_name}")
