@@ -11,9 +11,12 @@ Key components:
 
 import time
 from dataclasses import dataclass
-from typing import Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Dict, Optional
 
 import pandas as pd
+
+if TYPE_CHECKING:
+    from .error_handler import ErrorAnalysis
 
 
 def get_data_type(data: Any) -> str:
@@ -145,10 +148,60 @@ class SubOperationLog:
     error_message: Optional[str] = None
     request_kwargs: Dict[str, Any] = None
 
+    # New fields for enhanced error handling
+    error_details: Optional["ErrorAnalysis"] = None
+    exception_traceback: Optional[str] = None
+    response_data_raw: Optional[Any] = None  # For error analysis
+
     def __post_init__(self):
         """Initialize with default values if needed."""
         if self.request_kwargs is None:
             self.request_kwargs = {}
+
+        # If status is Error and no detailed information - analyze
+        if self.status == "Error" and self.error_details is None:
+            self._analyze_error_if_needed()
+
+    def _analyze_error_if_needed(self):
+        """Analyze error details if status is Error and no details exist."""
+        # Only analyze if we don't already have error details and we have either response data or exception info
+        if self.error_details is None and (self.response_data_raw is not None or self.exception_traceback is not None):
+            # Import here to avoid circular imports
+            from .error_handler import SubOperationErrorHandler
+
+            error_handler = SubOperationErrorHandler()
+            self.error_details = error_handler.analyze_error(self)
+
+    def has_detailed_error(self) -> bool:
+        """Check if detailed error information is available."""
+        return self.error_details is not None
+
+    def get_error_summary(self) -> str:
+        """Get brief error description for table display."""
+        max_length = 53  # Maximum total length including "..."
+
+        if self.error_details:
+            error_type = self.error_details.error_type.value
+            prefix = f"{error_type}: "
+            # Calculate available space for message (max_length - prefix - "...")
+            available_space = max_length - len(prefix) - 3  # 3 for "..."
+            if len(self.error_details.error_message) > available_space:
+                message = self.error_details.error_message[:available_space]
+                return f"{prefix}{message}..."
+            else:
+                return f"{prefix}{self.error_details.error_message}"
+        elif self.error_message:
+            if len(self.error_message) > 50:
+                return self.error_message[:50] + "..."
+            else:
+                return self.error_message
+        elif self.exception_traceback:
+            if len(self.exception_traceback) > 50:
+                return self.exception_traceback[:50] + "..."
+            else:
+                return self.exception_traceback
+        else:
+            return "Unknown error"
 
     def mark_completed(self, response_data: Optional[Dict], exception_info: Optional[str] = None) -> None:
         """
@@ -159,7 +212,16 @@ class SubOperationLog:
             exception_info: Exception information if an error occurred
         """
         self.end_time = time.time()
-        self.execution_time = self.end_time - self.start_time  # Determine status based on response and exceptions
+        self.execution_time = self.end_time - self.start_time
+
+        # Store raw response data for error analysis
+        self.response_data_raw = response_data
+
+        # Store exception information if available
+        if exception_info:
+            self.exception_traceback = exception_info
+
+        # Determine status based on response and exceptions
         exception_occurred = exception_info is not None
         self.status = determine_operation_status(response_data, exception_occurred)
 
@@ -178,6 +240,10 @@ class SubOperationLog:
         else:
             self.data_type = get_data_type(response_data) if response_data is not None else "None"
 
+        # Analyze error if status is Error
+        if self.status == "Error":
+            self._analyze_error_if_needed()
+
     @property
     def duration_ms(self) -> Optional[float]:
         """Get execution duration in milliseconds."""
@@ -192,7 +258,8 @@ class SubOperationLog:
 
         Returns:
             str: Clean operation name (e.g., 'CHECK_FILE_EXISTS' instead of 'OperationType.CHECK_FILE_EXISTS')
-        """  # Convert enum to string if needed
+        """
+        # Convert enum to string if needed
         operation_name_str = str(self.operation_name)
 
         # Handle OperationType enum objects
