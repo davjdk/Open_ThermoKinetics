@@ -429,12 +429,21 @@ DEFAULT_META_OPERATION_CONFIG.enable_strategy("target_similarity", {"min_sequenc
 
 def get_default_detector() -> Optional[MetaOperationDetector]:
     """
-    Get a detector with default configuration.
+    Get a detector with default configuration from logger_config.
 
     Returns:
-        MetaOperationDetector with default strategies or None if disabled
+        MetaOperationDetector with configured strategies or None if disabled
     """
-    return DEFAULT_META_OPERATION_CONFIG.create_detector()
+    try:
+        from ..logger_config import META_OPERATION_CONFIG
+
+        return create_detector_from_config(META_OPERATION_CONFIG)
+    except ImportError:
+        # Fallback to default configuration if logger_config is not available
+        return DEFAULT_META_OPERATION_CONFIG.create_detector()
+    except Exception:
+        # Return None if configuration fails
+        return None
 
 
 def create_detector_from_config(config_dict: Dict[str, Any]) -> Optional[MetaOperationDetector]:

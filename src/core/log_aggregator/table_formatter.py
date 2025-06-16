@@ -77,9 +77,13 @@ class OperationTableFormatter:
         # 2. Operation header
         header = self._format_operation_header(operation_log, operation_id)
         parts.append(header)
-        parts.append("")  # Empty line
+        parts.append("")  # Empty line        # 3. Meta-operations summary (if available)
+        if hasattr(operation_log, "meta_operations") and operation_log.meta_operations:
+            meta_summary = self._format_meta_operations_summary(operation_log.meta_operations)
+            parts.append(meta_summary)
+            parts.append("")  # Empty line
 
-        # 3. Sub-operations table
+        # 4. Sub-operations table
         if operation_log.sub_operations:
             table = self._format_sub_operations_table(operation_log.sub_operations)
             parts.append(table)
@@ -207,6 +211,48 @@ class OperationTableFormatter:
         truncated_error = self._truncate_text(exception_info, 200)
 
         return f"ERROR: {truncated_error}"
+
+    def _format_meta_operations_summary(self, meta_operations) -> str:
+        """
+        Format meta-operations summary for display.
+
+        Args:
+            meta_operations: List of MetaOperation objects
+
+        Returns:
+            str: Formatted meta-operations summary
+        """
+        if not meta_operations:
+            return ""
+
+        lines = ["META-OPERATIONS DETECTED:"]
+
+        for i, meta_op in enumerate(meta_operations, 1):
+            # Basic info line
+            duration_ms = meta_op.duration_ms or 0
+            success_rate = (
+                (meta_op.successful_operations_count / meta_op.operations_count * 100)
+                if meta_op.operations_count > 0
+                else 0
+            )
+
+            summary_line = (
+                f"  {i}. {meta_op.name} ({meta_op.heuristic}): "
+                f"{meta_op.operations_count} ops, {duration_ms:.1f}ms, "
+                f"{success_rate:.0f}% success"
+            )
+            lines.append(summary_line)
+
+            # Operation details (compact)
+            if meta_op.sub_operations:
+                step_numbers = [str(op.step_number) for op in meta_op.sub_operations]
+                if len(step_numbers) <= 5:
+                    steps_text = ", ".join(step_numbers)
+                else:
+                    steps_text = f"{', '.join(step_numbers[:3])}, ... {len(step_numbers)-3} more"
+                lines.append(f"     Steps: {steps_text}")
+
+        return "\n".join(lines)
 
     def _format_error_details_block(self, operation_log: OperationLog) -> str:
         """

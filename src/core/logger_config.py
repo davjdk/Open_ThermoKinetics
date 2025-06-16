@@ -171,3 +171,38 @@ def get_module_logger():
 
 # For backward compatibility, create a logger that appears to be from this module
 logger = LoggerManager.get_logger("core.logger_config")
+
+# Configuration for meta-operation detection system
+META_OPERATION_CONFIG = {
+    "enabled": True,  # Global enable/disable flag
+    "debug_mode": False,  # Detailed logging of meta-operation detection
+    "strategies": {
+        "time_window": {"enabled": True, "config": {"time_window_ms": 50.0}},
+        "target_cluster": {
+            "enabled": True,
+            "config": {
+                "target_list": ["file_data", "series_data", "calculation_data"],
+                "max_gap": 1,
+                "strict_sequence": False,
+            },
+        },
+        "name_similarity": {
+            "enabled": True,
+            "config": {"name_pattern": "GET_.*|SET_.*|UPDATE_.*", "prefix_length": 3, "case_sensitive": False},
+        },
+        "sequence_count": {
+            "enabled": False,  # Disable for now
+            "config": {"min_sequence": 3, "max_gap": 0},
+        },
+        "frequency_threshold": {
+            "enabled": False,  # Disable for now
+            "config": {"freq_threshold": 5, "freq_window_ms": 1000.0},
+        },
+    },
+    # Formatting settings for meta-operations display
+    "formatting": {
+        "compact_view": True,  # Compact display of meta-operations
+        "show_individual_ops": False,  # Whether to show individual operations within groups
+        "max_operations_inline": 5,  # Maximum operations to show inline before collapsing
+    },
+}
