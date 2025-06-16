@@ -69,7 +69,7 @@ class AggregatedOperationLogger:
     def _load_formatting_config(self) -> None:
         """Load formatting configuration from META_OPERATION_CONFIG."""
         try:
-            from ..logger_config import META_OPERATION_CONFIG
+            from .meta_operation_config import META_OPERATION_CONFIG
 
             formatting_config = META_OPERATION_CONFIG.get("formatting", {})
             minimalist_config = META_OPERATION_CONFIG.get("minimalist_settings", {})

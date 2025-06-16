@@ -14,7 +14,7 @@ Key components:
 
 import time
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 from tabulate import tabulate
 
@@ -44,6 +44,7 @@ class OperationTableFormatter:
         include_error_details: bool = True,
         max_error_context_items: int = 5,
         minimalist_mode: bool = False,
+        formatting_config: Optional[Dict] = None,
     ):
         """
         Initialize the table formatter.
@@ -55,17 +56,36 @@ class OperationTableFormatter:
             include_error_details: Whether to include detailed error blocks
             max_error_context_items: Maximum number of context items to display
             minimalist_mode: Whether to use minimalist formatting mode
+            formatting_config: Optional configuration dictionary for header formatting
         """
 
         # Store minimalist mode setting
         self.minimalist_mode = minimalist_mode
 
+        # Load formatting configuration
+        if formatting_config is None:
+            from .meta_operation_config import META_OPERATION_CONFIG
+
+            self._formatting_config = META_OPERATION_CONFIG["formatting"].copy()
+        else:
+            self._formatting_config = formatting_config.copy()
+
+        # Apply minimalist settings if enabled
+        if minimalist_mode or self._formatting_config.get("mode") == "minimalist":
+            from .meta_operation_config import META_OPERATION_CONFIG
+
+            minimalist_settings = META_OPERATION_CONFIG.get("minimalist_settings", {})
+            self._formatting_config.update(minimalist_settings)
+
         # Use config if provided, otherwise create default with legacy parameters
         if config is not None:
             self.config = config
-        else:
+        else:  # Use table_format from configuration if in minimalist mode
+            effective_table_format = (
+                self._formatting_config.get("table_format", table_format) if minimalist_mode else table_format
+            )
             self.config = FormatterConfig(
-                table_format=table_format,
+                table_format=effective_table_format,
                 max_cell_width=max_cell_width,
                 include_error_details=include_error_details,
                 max_error_context_items=max_error_context_items,
@@ -143,6 +163,8 @@ class OperationTableFormatter:
         """
         Format the operation header with name, ID, and start timestamp.
 
+        Supports both standard and minimalist header formats based on configuration.
+
         Args:
             operation_log: The operation log data
             operation_id: Unique operation identifier
@@ -151,9 +173,48 @@ class OperationTableFormatter:
             str: Formatted header string
         """
         start_time = datetime.fromtimestamp(operation_log.start_time or time.time())
-        timestamp_str = start_time.strftime("%Y-%m-%d %H:%M:%S")
+        timestamp_str = start_time.strftime("%Y-%m-%d %H:%M:%S")  # Determine header format from configuration
+        header_format = self._formatting_config.get("header_format", "standard")
 
-        return f'Operation "{operation_log.operation_name}" – STARTED (id={operation_id}, {timestamp_str})'
+        if header_format == "source_based" and operation_log.source_module and operation_log.source_line:
+            # Minimalist format: module.py:line "OPERATION" (id=X, timestamp)
+            source_info = self._format_source_info(operation_log)
+            return f'{source_info} "{operation_log.operation_name}" (id={operation_id}, {timestamp_str})'
+        else:
+            # Standard format: Operation "NAME" – STARTED (id=X, timestamp)
+            return f'Operation "{operation_log.operation_name}" – STARTED (id={operation_id}, {timestamp_str})'
+
+    def _format_source_info(self, operation_log: OperationLog) -> str:
+        """
+        Format source information (module and line number) for minimalist headers.
+
+        Args:
+            operation_log: The operation log data
+
+        Returns:
+            str: Formatted source info string
+        """
+        if not operation_log.source_module or not operation_log.source_line:
+            return "unknown:0"
+
+        # Truncate long module names for readability
+        module_name = operation_log.source_module
+        if len(module_name) > 25:  # Limit for readability
+            module_name = "..." + module_name[-22:]
+
+        return f"{module_name}:{operation_log.source_line}"
+
+    def _should_use_minimalist_header(self) -> bool:
+        """
+        Determine if minimalist header format should be used.
+
+        Returns:
+            bool: True if minimalist header should be used
+        """
+        return (
+            self._formatting_config.get("mode") == "minimalist"
+            or self._formatting_config.get("header_format") == "source_based"
+        )
 
     def _format_sub_operations_table(self, sub_operations: List[SubOperationLog]) -> str:
         """

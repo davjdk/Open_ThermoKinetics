@@ -431,3 +431,32 @@ def create_detector_from_config(config_dict: Dict[str, Any]) -> Optional[MetaOpe
     config = MetaOperationConfig()
     config.load_from_dict(config_dict)
     return config.create_detector()
+
+
+# Global configuration for meta-operations and formatting
+META_OPERATION_CONFIG = {
+    "enabled": True,
+    "formatting": {
+        "mode": "minimalist",  # Changed to "minimalist" for testing
+        "header_format": "source_based",  # Changed to "source_based" for testing
+        "table_format": "simple",  # Changed to "simple" for testing
+        "show_decorative_borders": False,
+        "show_completion_footer": False,
+        "table_separator": "\n\n",
+        "include_source_info": True,
+    },
+    "minimalist_settings": {
+        "header_format": "source_based",
+        "table_format": "simple",
+        "show_decorative_borders": False,
+        "show_completion_footer": False,
+        "table_separator": "\n\n",
+        "include_source_info": True,
+    },
+    "strategies": {
+        "time_window": {"enabled": True, "window_ms": 50.0, "min_cluster_size": 2},
+        "target_cluster": {"enabled": True, "min_cluster_size": 2},
+        "name_similarity": {"enabled": True, "name_pattern": "GET_.*|SET_.*|UPDATE_.*", "min_cluster_size": 2},
+        "sequence_count": {"enabled": True, "min_sequence_length": 3},
+    },
+}
