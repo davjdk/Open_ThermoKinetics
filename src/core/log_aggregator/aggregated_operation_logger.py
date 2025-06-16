@@ -48,13 +48,17 @@ class AggregatedOperationLogger:
         if self._initialized:
             return
 
-        self._logger_name = "solid_state_kinetics.operations"
+        self._main_logger = LoggerManager().get_logger("solid_state_kinetics")
         self._formatter = OperationTableFormatter(include_error_details=include_error_details)
-        self._main_logger = LoggerManager.get_logger(__name__)
+        self._initialized = True
+
+        # Initialize meta-operation detection
+        from .meta_operation_config import get_default_detector
+
+        self._meta_detector = get_default_detector()
 
         # Initialize the aggregated logger
         self._setup_aggregated_logger()
-        self._initialized = True
 
     def _setup_aggregated_logger(self) -> None:
         """Set up the aggregated operations logger with separate file handler."""
@@ -110,6 +114,14 @@ class AggregatedOperationLogger:
             return
 
         try:
+            # Apply meta-operation detection if detector is available
+            if self._meta_detector is not None:
+                try:
+                    self._meta_detector.detect_meta_operations(operation_log)
+                except Exception as e:
+                    # Meta-operation detection errors should not break logging
+                    self._main_logger.debug(f"Meta-operation detection failed: {e}")
+
             # Format the operation log using the table formatter
             formatted_log = self._formatter.format_operation_log(operation_log)
 

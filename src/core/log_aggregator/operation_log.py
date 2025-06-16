@@ -7,9 +7,13 @@ and logging in the log aggregator module.
 
 import time
 from dataclasses import dataclass, field
-from typing import List, Optional
+from typing import TYPE_CHECKING, List, Optional
 
 from .sub_operation_log import SubOperationLog
+
+# Use TYPE_CHECKING to avoid circular imports
+if TYPE_CHECKING:
+    from .meta_operation import MetaOperation
 
 
 @dataclass
@@ -21,6 +25,7 @@ class OperationLog:
     - Basic operation identification and timing
     - Execution status and error handling
     - Sub-operation tracking through handle_request_cycle interception
+    - Meta-operation clustering for improved readability
     """
 
     operation_name: str
@@ -30,6 +35,7 @@ class OperationLog:
     execution_time: Optional[float] = None
     exception_info: Optional[str] = None
     sub_operations: List[SubOperationLog] = field(default_factory=list)
+    meta_operations: List["MetaOperation"] = field(default_factory=list)
 
     def __post_init__(self):
         """Initialize operation with start timestamp."""
@@ -71,3 +77,22 @@ class OperationLog:
     def failed_sub_operations_count(self) -> int:
         """Get the number of failed sub-operations."""
         return sum(1 for sub_op in self.sub_operations if sub_op.status == "Error")
+
+    @property
+    def meta_operations_count(self) -> int:
+        """Get the total number of meta-operations."""
+        return len(self.meta_operations)
+
+    @property
+    def clustered_operations_count(self) -> int:
+        """Get the number of sub-operations that are part of meta-operations."""
+        return sum(len(meta_op.sub_operations) for meta_op in self.meta_operations)
+
+    @property
+    def standalone_operations_count(self) -> int:
+        """Get the number of sub-operations that are not part of any meta-operation."""
+        return self.sub_operations_count - self.clustered_operations_count
+
+    def has_meta_operations(self) -> bool:
+        """Check if this operation log contains any meta-operations."""
+        return len(self.meta_operations) > 0
