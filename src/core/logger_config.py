@@ -213,12 +213,26 @@ META_OPERATION_CONFIG = {
         "show_meta_statistics": True,  # Show statistics for groups
         "highlight_errors": True,  # Highlight errors in groups
         "time_precision": 3,  # Time precision (decimal places)
-        # Output modes configuration
+        # Minimalist formatting configuration
+        "mode": "standard",  # "standard" or "minimalist"
+        "table_format": "grid",  # "grid" or "simple"
+        "show_decorative_borders": True,  # Show decorative ===== borders
+        "show_completion_footer": True,  # Show "Operation COMPLETED" footer
+        "table_separator": "\n\n",  # Separator between tables
+        "include_source_info": True,  # Include module:line information
+        "header_format": "standard",  # "standard" or "minimalist"        # Output modes configuration
         "output_modes": {
             "default": "compact",  # Default mode
             "debug": "expanded",  # Debug mode
             "json": False,  # Additional JSON output
         },
+    },
+    # Minimalist mode settings that override defaults when mode="minimalist"
+    "minimalist_settings": {
+        "table_format": "simple",
+        "show_decorative_borders": False,
+        "show_completion_footer": False,
+        "header_format": "source_based",  # module:line format instead of standard format
     },
     # Display filters
     "display_filters": {

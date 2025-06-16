@@ -33,7 +33,8 @@ class OperationTableFormatter:
     - Sub-operations table with proper column alignment
     - Operation summary with statistics
     - Error blocks for operations with failures
-    - Meta-operations grouping and visualization"""
+    - Meta-operations grouping and visualization
+    """
 
     def __init__(
         self,
@@ -42,6 +43,7 @@ class OperationTableFormatter:
         max_cell_width: int = 50,
         include_error_details: bool = True,
         max_error_context_items: int = 5,
+        minimalist_mode: bool = False,
     ):
         """
         Initialize the table formatter.
@@ -51,7 +53,12 @@ class OperationTableFormatter:
             table_format: Tabulate table format (grid, plain, simple, etc.)
             max_cell_width: Maximum width for table cells to prevent overly wide output
             include_error_details: Whether to include detailed error blocks
-            max_error_context_items: Maximum number of context items to display"""
+            max_error_context_items: Maximum number of context items to display
+            minimalist_mode: Whether to use minimalist formatting mode
+        """
+
+        # Store minimalist mode setting
+        self.minimalist_mode = minimalist_mode
 
         # Use config if provided, otherwise create default with legacy parameters
         if config is not None:

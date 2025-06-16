@@ -21,8 +21,7 @@ class OperationLog:
     """
     Data structure for storing operation execution information.
 
-    This class captures all essential metrics for operation analysis:
-    - Basic operation identification and timing
+    This class captures all essential metrics for operation analysis:    - Basic operation identification and timing
     - Execution status and error handling
     - Sub-operation tracking through handle_request_cycle interception
     - Meta-operation clustering for improved readability
@@ -36,6 +35,10 @@ class OperationLog:
     exception_info: Optional[str] = None
     sub_operations: List[SubOperationLog] = field(default_factory=list)
     meta_operations: List["MetaOperation"] = field(default_factory=list)
+    # New fields for minimalist logging format
+    source_module: Optional[str] = None  # Source module name (e.g., "calculations_data.py")
+    source_line: Optional[int] = None  # Line number where operation was called
+    caller_info: Optional[str] = None  # Additional caller context info
 
     def __post_init__(self):
         """Initialize operation with start timestamp."""

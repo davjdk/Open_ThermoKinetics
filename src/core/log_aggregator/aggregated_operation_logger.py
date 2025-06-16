@@ -49,7 +49,15 @@ class AggregatedOperationLogger:
             return
 
         self._main_logger = LoggerManager().get_logger("solid_state_kinetics")
-        self._formatter = OperationTableFormatter(include_error_details=include_error_details)
+
+        # Load formatting configuration from logger_config
+        self._load_formatting_config()
+
+        self._formatter = OperationTableFormatter(
+            include_error_details=include_error_details,
+            table_format=self._table_format,
+            minimalist_mode=self._minimalist_mode,
+        )
         self._initialized = True
 
         # Initialize meta-operation detection
@@ -57,6 +65,50 @@ class AggregatedOperationLogger:
 
         self._meta_detector = get_default_detector()  # Initialize the aggregated logger
         self._setup_aggregated_logger()
+
+    def _load_formatting_config(self) -> None:
+        """Load formatting configuration from META_OPERATION_CONFIG."""
+        try:
+            from ..logger_config import META_OPERATION_CONFIG
+
+            formatting_config = META_OPERATION_CONFIG.get("formatting", {})
+            minimalist_config = META_OPERATION_CONFIG.get("minimalist_settings", {})
+
+            # Determine if minimalist mode is enabled
+            self._minimalist_mode = formatting_config.get("mode") == "minimalist"
+
+            # Apply settings based on mode
+            if self._minimalist_mode:
+                # Override with minimalist settings
+                self._table_format = minimalist_config.get("table_format", "simple")
+                self._show_decorative_borders = minimalist_config.get("show_decorative_borders", False)
+                self._show_completion_footer = minimalist_config.get("show_completion_footer", False)
+                self._header_format = minimalist_config.get("header_format", "source_based")
+            else:
+                # Use standard settings
+                self._table_format = formatting_config.get("table_format", "grid")
+                self._show_decorative_borders = formatting_config.get("show_decorative_borders", True)
+                self._show_completion_footer = formatting_config.get("show_completion_footer", True)
+                self._header_format = formatting_config.get("header_format", "standard")
+
+            self._include_source_info = formatting_config.get("include_source_info", True)
+            self._table_separator = formatting_config.get("table_separator", "\n\n")
+
+            self._main_logger.debug(
+                f"Loaded formatting config: minimalist={self._minimalist_mode}, " f"table_format={self._table_format}"
+            )
+
+        except Exception as e:
+            # Fallback to default values
+            self._minimalist_mode = False
+            self._table_format = "grid"
+            self._show_decorative_borders = True
+            self._show_completion_footer = True
+            self._header_format = "standard"
+            self._include_source_info = True
+            self._table_separator = "\n\n"
+
+            self._main_logger.warning(f"Failed to load formatting config, using defaults: {e}")
 
     def _setup_aggregated_logger(self) -> None:
         """Set up the aggregated operations logger with separate file handler."""

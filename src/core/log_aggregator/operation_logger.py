@@ -12,8 +12,10 @@ Key components:
 """
 
 import functools
+import inspect
 import threading
 import time
+from pathlib import Path
 from typing import Any, Callable, Optional, TypeVar
 
 from ..logger_config import LoggerManager
@@ -134,9 +136,50 @@ class OperationLogger:
         self.current_operation: Optional[OperationLog] = None
         self._original_methods: dict = {}  # Store original methods for restoration
 
+    def _capture_caller_info(self, operation_log: OperationLog) -> None:
+        """
+        Capture information about the calling code location.
+
+        Args:
+            operation_log: The operation log to populate with caller info
+        """
+        frame = inspect.currentframe()
+        try:
+            # Navigate up the call stack to find the decorated function
+            # Stack: _capture_caller_info -> start_operation -> wrapper -> decorated_function
+            for _ in range(4):  # Move up 4 frames to reach the decorated function
+                frame = frame.f_back
+                if frame is None:
+                    break
+
+            if frame:
+                filename = frame.f_code.co_filename
+                line_number = frame.f_lineno
+                module_name = Path(filename).name
+                function_name = frame.f_code.co_name
+
+                operation_log.source_module = module_name
+                operation_log.source_line = line_number
+                operation_log.caller_info = f"{module_name}:{line_number} in {function_name}()"
+
+                logger.debug(f"Captured caller info: {operation_log.caller_info}")
+
+        except Exception as e:
+            # Graceful fallback - should not interrupt main operation
+            operation_log.source_module = "unknown"
+            operation_log.source_line = 0
+            operation_log.caller_info = f"capture_failed: {str(e)}"
+            logger.debug(f"Failed to capture caller info: {e}")
+        finally:
+            del frame
+
     def start_operation(self, operation_name: str) -> OperationLog:
         """Start tracking a new operation."""
         self.current_operation = OperationLog(operation_name=operation_name, start_time=time.time())
+
+        # Capture caller information for minimalist logging format
+        self._capture_caller_info(self.current_operation)
+
         logger.debug(f"Operation '{operation_name}' started")
         return self.current_operation
 
