@@ -53,10 +53,22 @@ class AggregatedOperationLogger:
         # Load formatting configuration from logger_config
         self._load_formatting_config()
 
+        # Create formatter with full configuration
+        formatting_config = {
+            "mode": "minimalist" if self._minimalist_mode else "standard",
+            "table_format": self._table_format,
+            "show_decorative_borders": self._show_decorative_borders,
+            "show_completion_footer": self._show_completion_footer,
+            "header_format": self._header_format,
+            "include_source_info": self._include_source_info,
+            "table_separator": self._table_separator,
+        }
+
         self._formatter = OperationTableFormatter(
             include_error_details=include_error_details,
             table_format=self._table_format,
             minimalist_mode=self._minimalist_mode,
+            formatting_config=formatting_config,
         )
         self._initialized = True
 
@@ -169,8 +181,7 @@ class AggregatedOperationLogger:
             if self._meta_detector is not None:
                 try:
                     self._meta_detector.detect_meta_operations(operation_log)
-                except Exception as e:
-                    # Meta-operation detection errors should not break logging
+                except Exception as e:  # Meta-operation detection errors should not break logging
                     self._main_logger.debug(f"Meta-operation detection failed: {e}")
 
             # Format the operation log using the table formatter
@@ -178,11 +189,14 @@ class AggregatedOperationLogger:
 
             # Log to aggregated operations file if logger is available
             if self._aggregated_logger is not None:
-                # Add separator line before operation for readability
-                separator = "=" * 80
-                self._aggregated_logger.info(separator)
+                # Add separator line before operation for readability (only if decorative borders are enabled)
+                if self._show_decorative_borders:
+                    separator = "=" * 80
+                    self._aggregated_logger.info(separator)
                 self._aggregated_logger.info(formatted_log)
-                self._aggregated_logger.info(separator)
+                if self._show_decorative_borders:
+                    separator = "=" * 80
+                    self._aggregated_logger.info(separator)
             else:
                 # Fallback to main logger if aggregated logger failed to initialize
                 self._main_logger.warning("Aggregated logger not available, using main logger")

@@ -439,7 +439,7 @@ META_OPERATION_CONFIG = {
     "formatting": {
         "mode": "minimalist",  # Changed to "minimalist" for testing
         "header_format": "source_based",  # Changed to "source_based" for testing
-        "table_format": "simple",  # Changed to "simple" for testing
+        "table_format": "pipe",  # Changed to "pipe" for testing (shows | symbols)
         "show_decorative_borders": False,
         "show_completion_footer": False,
         "table_separator": "\n\n",
@@ -447,7 +447,7 @@ META_OPERATION_CONFIG = {
     },
     "minimalist_settings": {
         "header_format": "source_based",
-        "table_format": "simple",
+        "table_format": "pipe",  # Changed to "pipe" for testing (shows | symbols)
         "show_decorative_borders": False,
         "show_completion_footer": False,
         "table_separator": "\n\n",

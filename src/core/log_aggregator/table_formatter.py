@@ -89,15 +89,14 @@ class OperationTableFormatter:
                 max_cell_width=max_cell_width,
                 include_error_details=include_error_details,
                 max_error_context_items=max_error_context_items,
-            )
-        # Legacy compatibility
+            )  # Legacy compatibility
         self.table_format = self.config.table_format
         self.max_cell_width = self.config.max_cell_width
         self.include_error_details = self.config.include_error_details
         self.max_error_context_items = self.config.max_error_context_items
         self._operation_counter = 0  # Simple counter for unique operation IDs
 
-    def format_operation_log(self, operation_log: OperationLog) -> str:
+    def format_operation_log(self, operation_log: OperationLog) -> str:  # noqa: C901
         """
         Format a complete operation log into a readable table format.
 
@@ -116,13 +115,20 @@ class OperationTableFormatter:
 
         parts = []
 
-        # 1. Header separator
-        parts.append("=" * 80)
+        # Check if decorative borders should be shown
+        show_borders = self._formatting_config.get("show_decorative_borders", True)
+
+        # 1. Header separator (only in standard mode)
+        if show_borders:
+            parts.append("=" * 80)
 
         # 2. Operation header
         header = self._format_operation_header(operation_log, operation_id)
         parts.append(header)
-        parts.append("")  # Empty line        # 3. Sub-operations table (with meta-operations support)
+
+        # Empty line after header (only in standard mode)
+        if show_borders:
+            parts.append("")  # Empty line# 3. Sub-operations table (with meta-operations support)
         if operation_log.sub_operations:
             if (
                 self.config.group_meta_operations
@@ -154,10 +160,19 @@ class OperationTableFormatter:
         summary = self._format_operation_summary(operation_log, operation_id)
         parts.append(summary)
 
-        # 6. Footer separator
-        parts.append("=" * 80)
+        # 6. Footer separator (only in standard mode)
+        show_footer = self._formatting_config.get("show_completion_footer", True)
+        if show_footer:
+            footer = self._format_operation_footer(operation_log)
+            parts.append(footer)
+            parts.append("=" * 80)
 
-        return "\n".join(parts) + "\n"
+        # Add table separator in minimalist mode
+        separator = self._formatting_config.get("table_separator", "")
+        if separator and self._formatting_config.get("mode") == "minimalist":
+            parts.append(separator)
+
+        return "\n".join(parts)
 
     def _format_operation_header(self, operation_log: OperationLog, operation_id: int) -> str:
         """
@@ -249,18 +264,28 @@ class OperationTableFormatter:
             table_data.append(row)  # Format table with proper alignment
         column_alignment = ["right", "left", "left", "left", "center", "right"]
 
+        # Determine table format based on configuration
+        table_format = self._get_table_format()
+
         try:
             formatted_table = tabulate(
-                table_data, headers=headers, tablefmt=self.table_format, colalign=column_alignment, floatfmt=".3f"
+                table_data, headers=headers, tablefmt=table_format, colalign=column_alignment, floatfmt=".3f"
             )
             return formatted_table
         except Exception:
             # Fallback to simple formatting if tabulate fails
             return self._format_simple_table(headers, table_data)
 
+    def _get_table_format(self) -> str:
+        """Determine table format based on configuration."""
+        if self._formatting_config.get("mode") == "minimalist":
+            return "pipe"  # Minimalist format using pipe symbols
+        else:
+            return self._formatting_config.get("table_format", self.table_format)  # Standard format
+
     def _format_operation_summary(self, operation_log: OperationLog, operation_id: int) -> str:
         """
-        Format the operation summary with statistics and final status.
+        Format the operation summary with statistics.
 
         Args:
             operation_log: The operation log data
@@ -291,11 +316,23 @@ class OperationTableFormatter:
             f"with errors {failed_steps}, total time {total_time:.3f} s{meta_ops_info}."
         )
 
+        return stats_line
+
+    def _format_operation_footer(self, operation_log: OperationLog) -> str:
+        """
+        Format the operation footer with completion status.
+
+        Args:
+            operation_log: The operation log data
+
+        Returns:
+            str: Formatted footer string
+        """
         # Format completion line with status
         status_text = "successful" if operation_log.status == "success" else "with error"
         completion_line = f'Operation "{operation_log.operation_name}" – COMPLETED (status: {status_text})'
 
-        return f"{stats_line}\n{completion_line}"
+        return completion_line
 
     def _format_error_block(self, exception_info: str) -> str:
         """
