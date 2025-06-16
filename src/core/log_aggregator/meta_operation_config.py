@@ -279,8 +279,7 @@ class MetaOperationConfig:
 
                 try:
                     # Create strategy instance with configuration
-                    strategy = strategy_class()
-                    strategy.configure(**config)
+                    strategy = strategy_class(config)
                     strategies.append(strategy)
                 except Exception:
                     # Skip strategies that fail to initialize

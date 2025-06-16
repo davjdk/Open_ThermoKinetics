@@ -216,12 +216,8 @@ class MetaOperationDetector:
         min_group_size = self.config.get("min_group_size", 2)
 
         for meta_op in meta_operations_dict.values():
-            if len(meta_op.sub_operations) >= min_group_size:
-                # Sort operations by step_number
+            if len(meta_op.sub_operations) >= min_group_size:  # Sort operations by step_number
                 meta_op.sub_operations.sort(key=lambda op: op.step_number)
-
-                # Calculate metrics
-                meta_op.calculate_metrics()
 
                 # Update description with final data
                 meta_op.description = self._generate_final_description(meta_op)
@@ -249,9 +245,7 @@ class MetaOperationDetector:
         Generate final description for a meta-operation.
 
         Args:
-            meta_op: The meta-operation to describe
-
-        Returns:
+            meta_op: The meta-operation to describe        Returns:
             str: Final description
         """
         if not meta_op.sub_operations:
@@ -262,7 +256,10 @@ class MetaOperationDetector:
         duration = meta_op.duration_ms
 
         if duration is not None:
-            return f"{strategy} cluster: {op_count} operations in {duration:.1f}ms"
+            try:
+                return f"{strategy} cluster: {op_count} operations in {float(duration):.1f}ms"
+            except (ValueError, TypeError):
+                return f"{strategy} cluster: {op_count} operations (duration unknown)"
         else:
             return f"{strategy} cluster: {op_count} operations"
 

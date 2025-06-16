@@ -384,3 +384,57 @@ Operation "ADD_REACTION" – COMPLETED (status: successful)
 6. **Типобезопасность**: Централизованная система типов операций через OperationType
 
 Архитектура обеспечивает полный жизненный цикл анализа кинетики твердофазных реакций от загрузки экспериментальных данных до получения кинетических параметров с высокой степью автоматизации и контроля качества.
+
+---
+
+## Система кластеризации мета-операций
+
+**Meta-Operation Clustering** - интеллектуальная система группировки связанных подопераций для улучшения читаемости логов и выявления паттернов оптимизации.
+
+**Компоненты кластеризации**:
+- **MetaOperationDetector** (`src/core/log_aggregator/meta_operation_detector.py`) - оркестратор группировки
+- **Detection Strategies** (`src/core/log_aggregator/detection_strategies.py`) - плагинные алгоритмы кластеризации
+- **MetaOperationConfig** (`src/core/log_aggregator/meta_operation_config.py`) - централизованная конфигурация
+
+**Эвристики группировки**:
+- **Time Window**: Группировка операций по временной близости (50-100ms окна)
+- **Target Clustering**: Группировка по целевому модулю (file_data, calculation_data, series_data)
+- **Name Similarity**: Группировка по паттернам имен (GET_*, SET_*, UPDATE_*)
+- **Sequence Count**: Группировка последовательных однотипных операций
+
+**Пример кластеризованного лога**:
+```
+================================================================================
+Operation "ADD_REACTION" – STARTED (id=21, 2025-06-16 10:30:45)
+
+META-OPERATIONS DETECTED:
+⚡ [time_window_cluster_1] File Data Operations (2 steps, 0.004s)
+⚡ [target_cluster_calc] Calculation Updates (6 steps, 0.015s)
+
+DETAILED BREAKDOWN:
++--------+----------------------+-----------+--------------------+----------+-----------+
+| >>> File Data Operations (Meta-cluster: time_window)                                  |
++--------+----------------------+-----------+--------------------+----------+-----------+
+|      1 | CHECK_EXPERIMENT_... | file_data | bool               |    OK    |     0.001 |
+|      2 | GET_DF_DATA          | file_data | DataFrame          |    OK    |     0.003 |
++--------+----------------------+-----------+--------------------+----------+-----------+
+| >>> Calculation Updates (Meta-cluster: target+sequence)                               |
++--------+----------------------+-----------+--------------------+----------+-----------+
+|      3 | SET_VALUE            | calc_data | dict               |    OK    |     0.001 |
+|      4 | UPDATE_VALUE         | calc_data | dict               |    OK    |     0.001 |
+|      5 | SET_VALUE            | calc_data | dict               |    OK    |     0.001 |
+|      6 | UPDATE_VALUE         | calc_data | dict               |    OK    |     0.001 |
+|      7 | SET_VALUE            | calc_data | dict               |    OK    |     0.001 |
+|      8 | UPDATE_VALUE         | calc_data | dict               |    OK    |     0.001 |
++--------+----------------------+-----------+--------------------+----------+-----------+
+
+SUMMARY: steps 8, successful 8, meta-operations 2, total time 0.019 s.
+Operation "ADD_REACTION" – COMPLETED (status: successful)
+================================================================================
+```
+
+**Интеграция с AggregatedOperationLogger**:
+- Неинвазивная пост-обработка после завершения основной операции
+- Ошибки кластеризации не влияют на основное логирование
+- Полная конфигурируемость и отключаемость через настройки
+- Поддержка множественных форматов вывода (compact, detailed, table, json)

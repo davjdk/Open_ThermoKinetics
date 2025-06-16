@@ -473,3 +473,252 @@ Total with logging: 0.046s
 4. **Модульная архитектура**: Простое добавление новых типов метрик
 
 Архитектура системы агрегированного логирования обеспечивает комплексную observability для приложения анализа кинетики твердофазных реакций с минимальными накладными расходами и максимальной детализацией выполнения операций.
+
+---
+
+## Архитектура кластеризации мета-операций
+
+### Система интеллектуального группирования операций
+
+**Meta-Operation Clustering** - модуль для автоматического выявления и группировки логически связанных подопераций в более крупные семантические блоки с целью улучшения читаемости логов и выявления избыточных операций.
+
+### Центральные компоненты мета-операций
+
+**MetaOperationDetector** (`src/core/log_aggregator/meta_operation_detector.py`) - основной оркестратор кластеризации:
+- Координация множественных стратегий детекции
+- Применение эвристик группировки к завершенным операциям
+- Создание структур MetaOperation с информацией о кластерах
+- Интеграция с AggregatedOperationLogger без нарушения основного потока
+
+**Detection Strategies** (`src/core/log_aggregator/detection_strategies.py`) - плагинные алгоритмы группировки:
+- **TimeWindowStrategy**: Группировка по временной близости (configurable time window)
+- **TargetClusterStrategy**: Группировка по целевому модулю (file_data, calculation_data, etc.)
+- **NameSimilarityStrategy**: Группировка по паттернам имен операций (regex patterns)
+- **SequenceCountStrategy**: Группировка последовательных однотипных операций
+
+**MetaOperationConfig** (`src/core/log_aggregator/meta_operation_config.py`) - система конфигурации:
+- Централизованные настройки всех стратегий
+- Включение/отключение отдельных эвристик
+- Параметры группировки (time windows, cluster sizes, patterns)
+- Режимы форматирования вывода (compact, detailed, table, json)
+
+### Архитектура детекции мета-операций
+
+```mermaid
+graph TB
+    subgraph "Completed Operation"
+        OL[OperationLog<br/>with SubOperations]
+    end
+    
+    subgraph "Meta-Operation Detection"
+        MOD[MetaOperationDetector<br/>Orchestrator]
+        TWS[TimeWindowStrategy<br/>Temporal clustering]
+        TCS[TargetClusterStrategy<br/>Module clustering]
+        NSS[NameSimilarityStrategy<br/>Pattern clustering]
+        SCS[SequenceCountStrategy<br/>Sequential clustering]
+    end
+    
+    subgraph "Meta-Operation Structures"
+        MO1[MetaOperation<br/>Cluster 1]
+        MO2[MetaOperation<br/>Cluster 2]
+        MO3[MetaOperation<br/>Cluster N]
+    end
+    
+    subgraph "Enhanced Formatting"
+        ETF[EnhancedTableFormatter<br/>Meta-aware output]
+        AOL[AggregatedOperationLogger<br/>With clustering]
+    end
+    
+    OL -->|Apply detection| MOD
+    MOD -->|Strategy 1| TWS
+    MOD -->|Strategy 2| TCS
+    MOD -->|Strategy 3| NSS
+    MOD -->|Strategy 4| SCS
+    
+    TWS -->|Create clusters| MO1
+    TCS -->|Create clusters| MO2
+    NSS -->|Create clusters| MO3
+    SCS -->|Create clusters| MO3
+    
+    MO1 -->|Enhanced log| ETF
+    MO2 -->|Enhanced log| ETF
+    MO3 -->|Enhanced log| ETF
+    
+    ETF -->|Format output| AOL
+```
+
+### Паттерны кластеризации
+
+**Временная кластеризация (Time Window)**:
+- Группировка операций, стартующих в пределах настраиваемого временного окна (по умолчанию 50-100ms)
+- Эффективна для выявления пакетных операций и rapid-fire последовательностей
+- Параметры: `time_window_ms`, `min_cluster_size`
+
+**Целевая кластеризация (Target Clustering)**:
+- Группировка операций, направленных на один модуль (file_data, calculation_data, series_data)
+- Выявляет логические блоки работы с определенными подсистемами
+- Особенно полезна для операций типа: file loading → data validation → storage
+
+**Кластеризация по именам (Name Similarity)**:
+- Группировка операций с похожими именами по регулярным выражениям
+- Параметры: `name_pattern` (regex), примеры: `GET_.*`, `SET_.*|UPDATE_.*`
+- Эффективна для CRUD операций и workflow patterns
+
+**Последовательная кластеризация (Sequence Count)**:
+- Группировка подряд идущих операций одного типа
+- Параметры: `min_sequence_count` (minimum length for grouping)
+- Выявляет циклические операции и batch processing
+
+### Структуры данных мета-операций
+
+**MetaOperation** (`src/core/log_aggregator/meta_operation.py`) - структура кластера:
+
+```python
+@dataclass
+class MetaOperation:
+    meta_id: str                            # Уникальный идентификатор кластера
+    name: str                              # Человекочитаемое имя группы
+    heuristic: str                         # Стратегия, создавшая кластер
+    sub_operations: List[SubOperationLog]   # Операции в кластере
+    cluster_start_time: float             # Время начала кластера
+    cluster_end_time: float               # Время завершения кластера
+    total_execution_time: float           # Общее время выполнения
+```
+
+**Интеграция с OperationLog**:
+```python
+# Добавление мета-операций к существующему лог-объекту
+operation_log.meta_operations: List[MetaOperation] = []
+```
+
+**Конфигурация детекции**:
+```python
+# Пример конфигурации в meta_operation_config.py
+META_OPERATION_CONFIG = {
+    "enabled": True,
+    "strategies": {
+        "time_window": {
+            "enabled": True,
+            "time_window_ms": 50,
+            "min_cluster_size": 2
+        },
+        "target_cluster": {
+            "enabled": True,
+            "min_cluster_size": 2
+        },
+        "name_similarity": {
+            "enabled": True,
+            "name_pattern": r"(GET_|SET_|UPDATE_).*",
+            "min_cluster_size": 2
+        },
+        "sequence_count": {
+            "enabled": False,
+            "min_sequence_count": 3,
+            "min_cluster_size": 3
+        }
+    },
+    "formatting": {
+        "mode": "compact",  # compact, detailed, table, json
+        "show_individual_operations": True,
+        "meta_operation_summary": True
+    }
+}
+```
+
+### Интеграция в процесс логирования
+
+**Точка интеграции**: AggregatedOperationLogger.log_operation()
+```python
+def log_operation(self, operation_log: OperationLog) -> None:
+    # Apply meta-operation detection if detector is available
+    if self._meta_detector is not None:
+        try:
+            self._meta_detector.detect_meta_operations(operation_log)
+        except Exception as e:
+            # Meta-operation detection errors should not break logging
+            self._main_logger.debug(f"Meta-operation detection failed: {e}")
+    
+    # Standard formatting and output
+    formatted_log = self._formatter.format_operation_log(operation_log)
+    # ...
+```
+
+**Неинвазивная интеграция**:
+- Мета-операции применяются ПОСЛЕ завершения основной операции
+- Не влияют на сбор данных или выполнение бизнес-логики
+- Ошибки детекции не влияют на основное логирование
+- Полная обратная совместимость с существующими логами
+
+### Форматы вывода мета-операций
+
+**Компактный режим (Compact)**:
+```
+================================================================================
+Operation "ADD_REACTION" – STARTED (id=15, 2025-06-16 10:30:45)
+
+META-OPERATIONS DETECTED:
+⚡ [time_window_cluster_1] File Data Operations (2 steps, 0.004s)
+⚡ [target_cluster_calc] Calculation Updates (3 steps, 0.002s)
+
+DETAILED BREAKDOWN:
++--------+----------------------+-----------+--------------------+----------+-----------+
+|   Step | Sub-operation        | Target    | Result data type   |  Status  |   Time, s |
++========+======================+===========+====================+==========+===========+
+| >>> File Data Operations (Meta-cluster)                                               |
++--------+----------------------+-----------+--------------------+----------+-----------+
+|      1 | OperationType.CHE... | file_data | bool               |    OK    |     0.001 |
+|      2 | OperationType.GET... | file_data | DataFrame          |    OK    |     0.003 |
++--------+----------------------+-----------+--------------------+----------+-----------+
+| >>> Calculation Updates (Meta-cluster)                                                |
++--------+----------------------+-----------+--------------------+----------+-----------+
+|      3 | OperationType.SET... | calc_data | dict               |    OK    |     0.001 |
+|      4 | OperationType.UPD... | calc_data | dict               |    OK    |     0.001 |
++--------+----------------------+-----------+--------------------+----------+-----------+
+
+SUMMARY: steps 4, successful 4, with errors 0, meta-operations 2, total time 0.006 s.
+Operation "ADD_REACTION" – COMPLETED (status: successful)
+================================================================================
+```
+
+**JSON режим (для API интеграции)**:
+```json
+{
+  "operation": "ADD_REACTION",
+  "meta_operations": [
+    {
+      "meta_id": "time_window_cluster_1",
+      "name": "File Data Operations", 
+      "heuristic": "time_window",
+      "sub_operations": [...],
+      "execution_time": 0.004,
+      "operation_count": 2
+    }
+  ],
+  "summary": {
+    "total_meta_operations": 2,
+    "total_steps": 4,
+    "clustered_steps": 4,
+    "execution_time": 0.006
+  }
+}
+```
+
+### Преимущества мета-операций
+
+**Улучшение читаемости логов**:
+- Снижение визуального шума от множественных мелких операций
+- Семантическое группирование логически связанных действий
+- Выделение high-level workflow patterns
+
+**Выявление оптимизаций**:
+- Обнаружение избыточных последовательностей операций
+- Выявление неэффективных паттернов доступа к данным
+- Анализ временных характеристик групп операций
+
+**Архитектурная ценность**:
+- Неинвазивная интеграция без изменения бизнес-логики
+- Плагинная архитектура для легкого добавления новых эвристик
+- Конфигурируемость через settings без перекомпиляции
+- Полная отключаемость для отладки
+
+---

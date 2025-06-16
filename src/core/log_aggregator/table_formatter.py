@@ -102,6 +102,12 @@ class OperationTableFormatter:
                 and hasattr(operation_log, "meta_operations")
                 and operation_log.meta_operations
             ):
+                # Add meta-operations summary first
+                meta_summary = self._format_meta_operations_summary(operation_log.meta_operations)
+                if meta_summary:
+                    parts.append(meta_summary)
+                    parts.append("")  # Empty line
+
                 # Format with meta-operations grouping
                 table = self._format_with_meta_operations(operation_log)
             else:
@@ -253,9 +259,9 @@ class OperationTableFormatter:
 
         lines = ["META-OPERATIONS DETECTED:"]
 
-        for i, meta_op in enumerate(meta_operations, 1):
-            # Basic info line
+        for i, meta_op in enumerate(meta_operations, 1):  # Basic info line
             duration_ms = meta_op.duration_ms or 0
+
             success_rate = (
                 (meta_op.successful_operations_count / meta_op.operations_count * 100)
                 if meta_op.operations_count > 0
@@ -263,7 +269,7 @@ class OperationTableFormatter:
             )
 
             summary_line = (
-                f"  {i}. {meta_op.name} ({meta_op.heuristic}): "
+                f"  {i}. {meta_op.name} ({meta_op.strategy_name}): "
                 f"{meta_op.operations_count} ops, {duration_ms:.1f}ms, "
                 f"{success_rate:.0f}% success"
             )

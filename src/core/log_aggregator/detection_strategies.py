@@ -5,7 +5,7 @@ This module implements various strategies for detecting groups of related
 sub-operations that can be clustered into meta-operations.
 """
 
-from typing import List, Optional
+from typing import Dict, List, Optional
 
 from .meta_operation_detector import MetaOperationStrategy
 from .operation_log import OperationLog
@@ -77,6 +77,12 @@ class TargetClusterStrategy(MetaOperationStrategy):
 
     This strategy clusters sub-operations that interact with the same
     target component, indicating related functionality.
+
+    Advanced features:
+    - target_list: Only consider operations targeting specified components
+    - max_gap: Maximum allowed gap between operations of same target
+    - strict_sequence: Whether gaps should break clusters into separate ones
+    - min_cluster_size: Minimum operations needed to form a cluster
     """
 
     @property
@@ -85,8 +91,17 @@ class TargetClusterStrategy(MetaOperationStrategy):
 
     def validate_config(self) -> None:
         """Validate target clustering configuration."""
-        # No required parameters for this strategy
-        pass
+        # Validate max_gap if provided
+        if "max_gap" in self.config:
+            max_gap = self.config["max_gap"]
+            if not isinstance(max_gap, int) or max_gap < 0:
+                raise ValueError("TargetClusterStrategy max_gap must be a non-negative integer")
+
+        # Validate target_list if provided
+        if "target_list" in self.config:
+            target_list = self.config["target_list"]
+            if not isinstance(target_list, list):
+                raise ValueError("TargetClusterStrategy target_list must be a list")
 
     def detect(self, sub_op: SubOperationLog, context: OperationLog) -> Optional[str]:
         """
@@ -102,14 +117,99 @@ class TargetClusterStrategy(MetaOperationStrategy):
         if not sub_op.target:
             return None
 
-        # Count operations with same target
+        # Check if target is in whitelist (if specified)
+        target_list = self.config.get("target_list")
+        if target_list and sub_op.target not in target_list:
+            return None
+
+        # Find all operations with same target
         same_target_ops = [op for op in context.sub_operations if op.target == sub_op.target]
 
         min_cluster_size = self.config.get("min_cluster_size", 2)
-        if len(same_target_ops) >= min_cluster_size:
-            return f"target_{sub_op.target}"
+        if len(same_target_ops) < min_cluster_size:
+            return None
+
+        # If advanced clustering is disabled, use simple approach
+        max_gap = self.config.get("max_gap")
+        strict_sequence = self.config.get("strict_sequence", False)
+
+        if max_gap is None and not strict_sequence:
+            # Simple clustering - all operations with same target
+            return f"target_{sub_op.target}"  # Advanced clustering with gap analysis
+        return self._detect_with_gap_analysis(sub_op, context, same_target_ops)
+
+    def _detect_with_gap_analysis(
+        self, sub_op: SubOperationLog, context: OperationLog, same_target_ops: List[SubOperationLog]
+    ) -> Optional[str]:
+        """Perform gap-aware clustering analysis."""
+        max_gap = self.config.get("max_gap", float("inf"))
+        strict_sequence = self.config.get("strict_sequence", False)
+        min_cluster_size = self.config.get("min_cluster_size", 2)
+
+        # Sort all operations by step number
+        sorted_ops = sorted(context.sub_operations, key=lambda op: op.step_number)
+
+        # Find sequences of same-target operations within gap tolerance
+        clusters = self._find_target_clusters(sorted_ops, sub_op.target, max_gap, strict_sequence)
+        # Find which cluster contains our operation
+        for cluster_id, cluster_ops in clusters.items():
+            if len(cluster_ops) >= min_cluster_size and sub_op in cluster_ops:
+                return cluster_id
 
         return None
+
+    def _find_target_clusters(
+        self, sorted_ops: List[SubOperationLog], target: str, max_gap: int, strict_sequence: bool
+    ) -> Dict[str, List[SubOperationLog]]:
+        """Find clusters of operations with same target, respecting gap rules."""
+        clusters = {}
+        cluster_counter = 1
+
+        target_ops = [op for op in sorted_ops if op.target == target]
+        if not target_ops:
+            return clusters
+
+        # Group operations into clusters based on gaps
+        current_cluster = []
+        current_cluster_id = f"target_{target}_{cluster_counter}"
+
+        for i, op in enumerate(target_ops):
+            if not current_cluster:
+                # Start new cluster
+                current_cluster = [op]
+            else:
+                # Check gap to previous operation in cluster
+                prev_op = current_cluster[-1]
+
+                # Find positions in sorted operations
+                prev_pos = next(j for j, sorted_op in enumerate(sorted_ops) if sorted_op == prev_op)
+                curr_pos = next(j for j, sorted_op in enumerate(sorted_ops) if sorted_op == op)
+
+                gap = curr_pos - prev_pos - 1
+
+                if strict_sequence and gap >= max_gap:
+                    # Gap too large in strict mode - finalize current cluster and start new one
+                    if len(current_cluster) >= 1:  # Save even single operations for now
+                        clusters[current_cluster_id] = current_cluster
+
+                    cluster_counter += 1
+                    current_cluster_id = f"target_{target}_{cluster_counter}"
+                    current_cluster = [op]
+                elif not strict_sequence and gap > max_gap:
+                    # Gap too large in non-strict mode - finalize current cluster and start new one
+                    if len(current_cluster) >= 1:  # Save even single operations for now
+                        clusters[current_cluster_id] = current_cluster
+
+                    cluster_counter += 1
+                    current_cluster_id = f"target_{target}_{cluster_counter}"
+                    current_cluster = [op]
+                else:
+                    # Add to current cluster
+                    current_cluster.append(op)  # Add final cluster
+        if current_cluster:
+            clusters[current_cluster_id] = current_cluster
+
+        return clusters
 
     def get_meta_operation_description(self, meta_id: str, operations: List[SubOperationLog]) -> str:
         """Generate description for target-based cluster."""

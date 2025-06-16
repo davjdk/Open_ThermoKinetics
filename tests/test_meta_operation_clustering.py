@@ -12,11 +12,7 @@ from pathlib import Path
 # Add the src directory to the Python path
 sys.path.insert(0, str(Path(__file__).parent.parent / "src"))
 
-from core.log_aggregator.detection_strategies import (
-    NameSimilarityStrategy,
-    TargetSimilarityStrategy,
-    TimeWindowClusterStrategy,
-)
+from core.log_aggregator.detection_strategies import NameSimilarityStrategy, TargetClusterStrategy, TimeWindowStrategy
 from core.log_aggregator.meta_operation_config import MetaOperationConfig
 from core.log_aggregator.meta_operation_detector import MetaOperationDetector
 from core.log_aggregator.operation_log import OperationLog
@@ -73,7 +69,7 @@ def test_time_window_clustering():
     """Test time window clustering strategy."""
     print("Testing Time Window Clustering...")
 
-    strategy = TimeWindowClusterStrategy(time_window_ms=50.0)
+    strategy = TimeWindowStrategy(config={"window_ms": 50.0})
     operation_log = create_test_operation_log()
 
     detector = MetaOperationDetector([strategy])
@@ -82,7 +78,7 @@ def test_time_window_clustering():
     print(f"Created {len(operation_log.meta_operations)} meta-operations")
     for meta_op in operation_log.meta_operations:
         print(f"  {meta_op.name}: {len(meta_op.sub_operations)} operations")
-        print(f"    Heuristic: {meta_op.heuristic}")
+        print(f"    Strategy: {meta_op.strategy_name}")
         print(f"    Duration: {meta_op.duration_ms:.1f}ms")
 
     assert len(operation_log.meta_operations) > 0, "Should create at least one meta-operation"
@@ -93,7 +89,7 @@ def test_name_similarity_clustering():
     """Test name similarity clustering strategy."""
     print("Testing Name Similarity Clustering...")
 
-    strategy = NameSimilarityStrategy(prefix_length=3)
+    strategy = NameSimilarityStrategy(config={})
     operation_log = create_test_operation_log()
 
     detector = MetaOperationDetector([strategy])
@@ -102,7 +98,7 @@ def test_name_similarity_clustering():
     print(f"Created {len(operation_log.meta_operations)} meta-operations")
     for meta_op in operation_log.meta_operations:
         print(f"  {meta_op.name}: {len(meta_op.sub_operations)} operations")
-        print(f"    Heuristic: {meta_op.heuristic}")
+        print(f"    Strategy: {meta_op.strategy_name}")
         for sub_op in meta_op.sub_operations:
             print(f"      - {sub_op.operation_name}")
 
@@ -113,7 +109,7 @@ def test_target_similarity_clustering():
     """Test target similarity clustering strategy."""
     print("Testing Target Similarity Clustering...")
 
-    strategy = TargetSimilarityStrategy(min_sequence_length=2)
+    strategy = TargetClusterStrategy(config={})
     operation_log = create_test_operation_log()
 
     detector = MetaOperationDetector([strategy])
@@ -131,14 +127,12 @@ def test_configuration_system():
     """Test the configuration system."""
     print("Testing Configuration System...")
 
-    config = MetaOperationConfig()
-
-    # Test enabling strategies
-    assert config.enable_strategy("time_window", {"time_window_ms": 100.0})
+    config = MetaOperationConfig()  # Test enabling strategies
+    assert config.enable_strategy("time_window", {"window_ms": 100.0})
     assert config.enable_strategy("name_similarity")
 
     # Test configuration
-    assert config.configure_strategy("time_window", {"time_window_ms": 25.0})
+    assert config.configure_strategy("time_window", {"window_ms": 25.0})
 
     # Test detector creation
     detector = config.create_detector()
@@ -156,10 +150,10 @@ def test_configuration_system():
 def test_multiple_strategies():
     """Test multiple strategies working together."""
     print("Testing Multiple Strategies...")
-
     strategies = [
-        TimeWindowClusterStrategy(time_window_ms=50.0),
-        TargetSimilarityStrategy(min_sequence_length=2),
+        TimeWindowStrategy(config={"window_ms": 50.0}),
+        TargetClusterStrategy(config={}),
+        NameSimilarityStrategy(config={}),
     ]
 
     operation_log = create_test_operation_log()
@@ -168,7 +162,7 @@ def test_multiple_strategies():
 
     print(f"Created {len(operation_log.meta_operations)} meta-operations with multiple strategies")
     for meta_op in operation_log.meta_operations:
-        print(f"  {meta_op.name}: {len(meta_op.sub_operations)} operations (by {meta_op.heuristic})")
+        print(f"  {meta_op.name}: {len(meta_op.sub_operations)} operations (by {meta_op.strategy_name})")
 
     print("✓ Multiple strategies test passed\n")
 

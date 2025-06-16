@@ -26,8 +26,7 @@ class MetaOperation:
     strategy_name: str = "unknown"  # Name of the clustering strategy used
     description: str = ""  # Human-readable description of the meta-operation
     sub_operations: List[SubOperationLog] = field(default_factory=list)
-    start_time: Optional[float] = None  # Start timestamp
-    end_time: Optional[float] = None  # End timestamp
+    start_time: Optional[float] = None  # Start timestamp    end_time: Optional[float] = None  # End timestamp
     cluster_type: str = "unknown"  # Type of clustering used (temporal, semantic, etc.)
     cluster_parameters: dict = field(default_factory=dict)  # Parameters used for clustering
 
@@ -49,7 +48,7 @@ class MetaOperation:
         if self.execution_time is not None:
             return self.execution_time * 1000
         # Fallback: sum of individual operation times
-        return sum(op.duration for op in self.sub_operations if op.duration is not None)
+        return sum(op.execution_time for op in self.sub_operations if op.execution_time is not None)
 
     @property
     def operations_count(self) -> int:
@@ -115,4 +114,27 @@ class MetaOperation:
     @property
     def total_execution_time(self) -> Optional[float]:
         """Get total execution time for all operations in the group."""
-        return self.execution_time
+        # First try direct execution time
+        if self.execution_time is not None:
+            return self.execution_time
+
+        # Fallback: calculate from sub-operations
+        if not self.sub_operations:
+            return None
+
+        # Sum execution times of sub-operations
+        total = 0.0
+        for op in self.sub_operations:
+            if hasattr(op, "execution_time") and op.execution_time is not None:
+                total += op.execution_time
+
+        return total if total > 0 else None
+
+    def __str__(self) -> str:
+        """Return a clean string representation for logging."""
+        return f"MetaOperation({self.meta_id}, {self.strategy_name}, {len(self.sub_operations)} ops)"
+
+    def __repr__(self) -> str:
+        """Return a detailed representation without response_data_raw."""
+        sub_ops_summary = f"{len(self.sub_operations)} operations" if self.sub_operations else "no operations"
+        return f"MetaOperation(meta_id='{self.meta_id}', strategy='{self.strategy_name}', {sub_ops_summary})"

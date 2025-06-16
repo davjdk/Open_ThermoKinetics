@@ -49,7 +49,7 @@ def test_detector_creation():
 
     print(f"✓ Detector configured with {len(detector.strategies)} strategies")
     for strategy in detector.strategies:
-        print(f"  - {strategy.get_strategy_name()}")
+        print(f"  - {strategy.strategy_name}")
 
     return True
 
@@ -59,35 +59,33 @@ def test_meta_operation_detection_with_realistic_data():
 
     # Create a realistic operation log that simulates file loading and processing
     operation_log = OperationLog("LOAD_AND_PROCESS_FILE")
-    base_time = time.time()
-
-    # Simulate a typical file loading sequence - these should cluster by time
+    base_time = time.time()  # Simulate a typical file loading sequence - these should cluster by time
     file_ops = [
-        SubOperationLog(1, "CHECK_FILE_EXISTS", "file_data", base_time, base_time + 0.001),
-        SubOperationLog(2, "GET_FILE_METADATA", "file_data", base_time + 0.002, base_time + 0.003),
-        SubOperationLog(3, "SET_LOADING_STATUS", "file_data", base_time + 0.004, base_time + 0.005),
+        SubOperationLog(1, "CHECK_FILE_EXISTS", "file_data", base_time, base_time + 0.001, 0.001),
+        SubOperationLog(2, "GET_FILE_METADATA", "file_data", base_time + 0.002, base_time + 0.003, 0.001),
+        SubOperationLog(3, "SET_LOADING_STATUS", "file_data", base_time + 0.004, base_time + 0.005, 0.001),
     ]
 
     # Simulate data processing sequence - different time, same target
     processing_ops = [
-        SubOperationLog(4, "GET_CALCULATION_PARAMS", "calculation_data", base_time + 0.1, base_time + 0.11),
-        SubOperationLog(5, "SET_DEFAULT_VALUES", "calculation_data", base_time + 0.12, base_time + 0.13),
-        SubOperationLog(6, "UPDATE_COEFFICIENT_BOUNDS", "calculation_data", base_time + 0.14, base_time + 0.15),
+        SubOperationLog(4, "GET_CALCULATION_PARAMS", "calculation_data", base_time + 0.1, base_time + 0.11, 0.01),
+        SubOperationLog(5, "SET_DEFAULT_VALUES", "calculation_data", base_time + 0.12, base_time + 0.13, 0.01),
+        SubOperationLog(6, "UPDATE_COEFFICIENT_BOUNDS", "calculation_data", base_time + 0.14, base_time + 0.15, 0.01),
     ]
 
     # Simulate similar name operations - should cluster by name pattern
     update_ops = [
-        SubOperationLog(7, "UPDATE_REACTION_LIST", "calculation_data", base_time + 0.2, base_time + 0.21),
-        SubOperationLog(8, "UPDATE_DISPLAY_STATE", "calculation_data", base_time + 0.22, base_time + 0.23),
+        SubOperationLog(7, "UPDATE_REACTION_LIST", "calculation_data", base_time + 0.2, base_time + 0.21, 0.01),
+        SubOperationLog(8, "UPDATE_DISPLAY_STATE", "calculation_data", base_time + 0.22, base_time + 0.23, 0.01),
     ]
 
     # Single operation that shouldn't cluster
-    standalone_op = SubOperationLog(9, "SAVE_RESULTS", "file_data", base_time + 0.3, base_time + 0.31)
+    standalone_op = SubOperationLog(9, "SAVE_RESULTS", "file_data", base_time + 0.3, base_time + 0.31, 0.01)
 
     all_ops = file_ops + processing_ops + update_ops + [standalone_op]
 
     for sub_op in all_ops:
-        sub_op.response_data_type = "dict"
+        sub_op.data_type = "dict"
         sub_op.status = "OK"
         operation_log.sub_operations.append(sub_op)
 
@@ -97,13 +95,11 @@ def test_meta_operation_detection_with_realistic_data():
     detector = get_default_detector()
     detector.detect_meta_operations(operation_log)
 
-    print(f"✓ Detected {len(operation_log.meta_operations)} meta-operations")
-
-    # Verify that some clustering occurred
+    print(f"✓ Detected {len(operation_log.meta_operations)} meta-operations")  # Verify that some clustering occurred
     assert len(operation_log.meta_operations) > 0, "Should detect at least one meta-operation"
 
     for i, meta_op in enumerate(operation_log.meta_operations, 1):
-        print(f"  {i}. {meta_op.name} ({meta_op.heuristic}): {len(meta_op.sub_operations)} operations")
+        print(f"  {i}. {meta_op.name} ({meta_op.strategy_name}): {len(meta_op.sub_operations)} operations")
         step_numbers = [op.step_number for op in meta_op.sub_operations]
         print(f"     Steps: {step_numbers}")
 
@@ -115,9 +111,7 @@ def test_meta_operation_formatting():
 
     # Create a test operation log with meta-operations
     operation_log = OperationLog("TEST_FORMATTING")
-    base_time = time.time()
-
-    # Add sub-operations
+    base_time = time.time()  # Add sub-operations
     sub_ops = [
         SubOperationLog(1, "GET_VALUE", "file_data", base_time, base_time + 0.001),
         SubOperationLog(2, "SET_VALUE", "file_data", base_time + 0.002, base_time + 0.003),
@@ -125,13 +119,19 @@ def test_meta_operation_formatting():
     ]
 
     for sub_op in sub_ops:
-        sub_op.response_data_type = "dict"
+        sub_op.data_type = "dict"
         sub_op.status = "OK"
+        # Calculate execution time manually since we're not calling mark_completed()
+        if sub_op.end_time is not None:
+            sub_op.execution_time = sub_op.end_time - sub_op.start_time
         operation_log.sub_operations.append(sub_op)
 
     # Add a mock meta-operation
     meta_op = MetaOperation(
-        meta_id="test_cluster_1", name="File Operations Cluster", heuristic="time_window", sub_operations=sub_ops
+        meta_id="test_cluster_1",
+        strategy_name="time_window",
+        description="File Operations Cluster",
+        sub_operations=sub_ops,
     )
     operation_log.meta_operations = [meta_op]
     operation_log.mark_completed(success=True)

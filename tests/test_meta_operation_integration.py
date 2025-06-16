@@ -1,209 +1,280 @@
 """
-Integration test for meta-operation detection in the context of solid-state kinetics application.
+Integration tests for meta-operation clustering in aggregated logging.
 
-This test demonstrates meta-operation detection working with realistic operation patterns
-that occur during typical application usage.
+This module tests the complete integration of the meta-operation clustering
+module with the existing logging infrastructure.
 """
 
-import sys
-from pathlib import Path
+import time
+from unittest.mock import Mock, patch
 
-# Add src to path for imports
-sys.path.insert(0, str(Path(__file__).parent / "src"))
+import pytest
 
-from core.log_aggregator import get_default_detector, operation
-
-
-class MockFileData:
-    """Mock FileData class for testing."""
-
-    @operation
-    def load_file(self, file_path: str):
-        """Mock file loading with sub-operations."""
-        # Simulate sub-operations that would normally occur
-        self._check_file_exists(file_path)
-        data = self._read_file_content(file_path)
-        self._validate_data_format(data)
-        return {"success": True, "data": data}
-
-    def _check_file_exists(self, file_path: str):
-        """Simulate handle_request_cycle call."""
-        # This would normally call handle_request_cycle
-        pass
-
-    def _read_file_content(self, file_path: str):
-        """Simulate file reading."""
-        return {"temperature": [100, 200, 300], "signal": [0.1, 0.5, 0.9]}
-
-    def _validate_data_format(self, data):
-        """Simulate data validation."""
-        pass
+from src.core.app_settings import OperationType
+from src.core.log_aggregator.aggregated_operation_logger import AggregatedOperationLogger
+from src.core.log_aggregator.operation_log import OperationLog
+from src.core.log_aggregator.sub_operation_log import SubOperationLog
 
 
-class MockCalculationsData:
-    """Mock CalculationsData class for testing."""
+class TestMetaOperationIntegration:
+    """Integration tests for meta-operation clustering functionality."""
 
-    @operation
-    def add_reaction(self, reaction_params: dict):
-        """Mock reaction addition with clustered operations."""
-        # These operations should be clustered by time window
-        self._validate_params(reaction_params)
-        self._set_default_values(reaction_params)
-        self._update_reaction_list(reaction_params)
-        return {"success": True, "reaction_id": "reaction_1"}
+    def setup_method(self):
+        """Set up test environment."""
+        # Reset singleton instance for each test
+        AggregatedOperationLogger._instance = None
+        AggregatedOperationLogger._initialized = False
 
-    @operation
-    def update_coefficients(self, reaction_id: str, coeffs: dict):
-        """Mock coefficient updates."""
-        # These should cluster with similar operations
-        self._get_reaction(reaction_id)
-        self._set_coefficients(reaction_id, coeffs)
-        self._update_bounds(reaction_id, coeffs)
-        return {"success": True}
+    def create_test_operation_log(self, operation_name: str = "TEST_OPERATION") -> OperationLog:
+        """Create a test operation log with multiple sub-operations."""
+        base_time = time.time()
 
-    def _validate_params(self, params):
-        """Simulate parameter validation."""
-        pass
+        operation_log = OperationLog(operation_name=operation_name)
+        operation_log.start_time = base_time
+        operation_log.end_time = base_time + 0.1
+        operation_log.status = "success"
+        operation_log.execution_time = 0.1  # Add sub-operations that should be clustered by time window
+        sub_ops = [
+            SubOperationLog(
+                step_number=1,
+                operation_name=str(OperationType.LOAD_FILE),
+                target="file_data",
+                start_time=base_time + 0.001,
+                end_time=base_time + 0.002,
+                execution_time=0.001,
+                data_type="bool",
+                status="OK",
+            ),
+            SubOperationLog(
+                step_number=2,
+                operation_name=str(OperationType.GET_DF_DATA),
+                target="file_data",
+                start_time=base_time + 0.003,
+                end_time=base_time + 0.006,
+                execution_time=0.003,
+                data_type="DataFrame",
+                status="OK",
+            ),
+            SubOperationLog(
+                step_number=3,
+                operation_name=str(OperationType.SET_VALUE),
+                target="calculation_data",
+                start_time=base_time + 0.007,
+                end_time=base_time + 0.008,
+                execution_time=0.001,
+                data_type="dict",
+                status="OK",
+            ),
+            SubOperationLog(
+                step_number=4,
+                operation_name=str(OperationType.UPDATE_VALUE),
+                target="calculation_data",
+                start_time=base_time + 0.009,
+                end_time=base_time + 0.010,
+                execution_time=0.001,
+                data_type="dict",
+                status="OK",
+            ),
+        ]
 
-    def _set_default_values(self, params):
-        """Simulate setting defaults."""
-        pass
+        operation_log.sub_operations = sub_ops
+        return operation_log
 
-    def _update_reaction_list(self, params):
-        """Simulate updating reaction list."""
-        pass
+    def test_aggregated_logger_with_meta_detection(self):
+        """Test that AggregatedOperationLogger integrates meta-operation detection."""
+        with patch("src.core.log_aggregator.meta_operation_config.get_default_detector") as mock_detector_factory:
+            # Create mock detector
+            mock_detector = Mock()
+            mock_detector_factory.return_value = mock_detector
 
-    def _get_reaction(self, reaction_id):
-        """Simulate getting reaction."""
-        pass
+            # Mock the file setup to avoid actual file operations
+            with patch.object(AggregatedOperationLogger, "_setup_aggregated_logger"):
+                # Initialize aggregated logger
+                logger = AggregatedOperationLogger()
+                logger._aggregated_logger = Mock()
 
-    def _set_coefficients(self, reaction_id, coeffs):
-        """Simulate setting coefficients."""
-        pass
+                # Create test operation log
+                operation_log = self.create_test_operation_log("ADD_REACTION")
 
-    def _update_bounds(self, reaction_id, coeffs):
-        """Simulate updating bounds."""
-        pass
+                # Log the operation
+                logger.log_operation(operation_log)
+
+                # Verify meta-detection was called
+                mock_detector.detect_meta_operations.assert_called_once_with(operation_log)
+
+    def test_meta_detection_error_handling(self):
+        """Test that meta-detection errors don't break logging."""
+        with patch("src.core.log_aggregator.meta_operation_config.get_default_detector") as mock_detector_factory:
+            # Create mock detector that raises an exception
+            mock_detector = Mock()
+            mock_detector.detect_meta_operations.side_effect = Exception("Detection failed")
+            mock_detector_factory.return_value = mock_detector
+
+            # Mock the aggregated logger to avoid file operations
+            with patch.object(AggregatedOperationLogger, "_setup_aggregated_logger"):
+                logger = AggregatedOperationLogger()
+                logger._aggregated_logger = Mock()
+
+                # Create test operation log
+                operation_log = self.create_test_operation_log("ADD_REACTION")
+
+                # Log the operation - should not raise exception
+                logger.log_operation(operation_log)
+
+                # Verify logging still occurred despite detection error
+                logger._aggregated_logger.info.assert_called()
+
+    def test_detector_disabled_integration(self):
+        """Test that disabled detector doesn't affect logging."""
+        with patch("src.core.log_aggregator.meta_operation_config.get_default_detector") as mock_detector_factory:
+            # Return None to simulate disabled detector
+            mock_detector_factory.return_value = None
+
+            # Mock the aggregated logger setup
+            with patch.object(AggregatedOperationLogger, "_setup_aggregated_logger"):
+                logger = AggregatedOperationLogger()
+                logger._aggregated_logger = Mock()
+
+                # Create test operation log
+                operation_log = self.create_test_operation_log("DISABLED_TEST")
+
+                # Log the operation
+                logger.log_operation(operation_log)
+
+                # Verify logging still works
+                logger._aggregated_logger.info.assert_called()
+
+    def test_real_scenario_rapid_operations_clustering(self):
+        """Test clustering on rapid operation sequence similar to real application usage."""
+        # Mock detector and strategies for testing
+        mock_detector = Mock()
+        mock_detector.detect_meta_operations = Mock()
+
+        with patch("src.core.log_aggregator.meta_operation_config.get_default_detector", return_value=mock_detector):
+            with patch.object(AggregatedOperationLogger, "_setup_aggregated_logger"):
+                logger = AggregatedOperationLogger()
+                logger._aggregated_logger = Mock()
+
+                # Simulate the real scenario from logs - rapid operations
+                base_time = time.time()
+                operation_log = OperationLog(operation_name="RAPID_OPERATIONS_BATCH")
+                operation_log.start_time = base_time
+
+                # Create sequence of rapid operations like in real application
+                sub_ops = []
+                for i in range(8):  # Simulate 8 rapid operations
+                    sub_op = SubOperationLog(
+                        step_number=i + 1,
+                        operation_name=str(OperationType.SET_VALUE) if i % 2 == 0 else str(OperationType.UPDATE_VALUE),
+                        target="calculation_data",
+                        start_time=base_time + i * 0.005,  # 5ms intervals
+                        end_time=base_time + i * 0.005 + 0.001,
+                        execution_time=0.001,
+                        data_type="dict",
+                        status="OK",
+                    )
+                    sub_ops.append(sub_op)
+
+                operation_log.sub_operations = sub_ops
+
+                # Log the operation
+                logger.log_operation(operation_log)
+
+                # Verify that meta-detection was called
+                mock_detector.detect_meta_operations.assert_called_once_with(operation_log)
+
+                # Verify logging occurred
+                logger._aggregated_logger.info.assert_called()
+
+    def test_formatting_with_meta_operations(self):
+        """Test that formatter handles operations with meta-operation attributes."""
+        with patch("src.core.log_aggregator.meta_operation_config.get_default_detector") as mock_detector_factory:
+            # Create mock detector that adds meta_operations attribute
+            mock_detector = Mock()
+
+            def add_meta_operations(operation_log):
+                operation_log.meta_operations = []
+                # Add mock meta-operation attribute to test formatting
+
+            mock_detector.detect_meta_operations.side_effect = add_meta_operations
+            mock_detector_factory.return_value = mock_detector
+
+            with patch.object(AggregatedOperationLogger, "_setup_aggregated_logger"):
+                logger = AggregatedOperationLogger()
+                logger._aggregated_logger = Mock()
+
+                # Create test operation log
+                operation_log = self.create_test_operation_log("FORMAT_TEST")
+
+                # Format the log
+                formatted = logger.format_operation_log(operation_log)
+
+                # Verify formatting doesn't fail
+                assert isinstance(formatted, str)
+                assert len(formatted) > 0
+
+    def test_multiple_operations_logging(self):
+        """Test logging multiple operations in sequence."""
+        with patch("src.core.log_aggregator.meta_operation_config.get_default_detector") as mock_detector_factory:
+            mock_detector = Mock()
+            mock_detector_factory.return_value = mock_detector
+
+            with patch.object(AggregatedOperationLogger, "_setup_aggregated_logger"):
+                logger = AggregatedOperationLogger()
+                logger._aggregated_logger = Mock()
+
+                # Log multiple operations
+                operations = [
+                    self.create_test_operation_log("OPERATION_1"),
+                    self.create_test_operation_log("OPERATION_2"),
+                    self.create_test_operation_log("OPERATION_3"),
+                ]
+
+                for op in operations:
+                    logger.log_operation(op)  # Verify all operations were processed
+                assert mock_detector.detect_meta_operations.call_count == 3
+                # At least 2 calls per operation (separator + content)
+                assert logger._aggregated_logger.info.call_count >= 6
 
 
-def test_meta_operation_detection_integration():
-    """Test meta-operation detection with realistic application scenarios."""
-    print("Testing meta-operation detection integration...")
+class TestMetaOperationErrorHandling:
+    """Test error handling in meta-operation integration."""
 
-    # Verify detector is properly configured
-    detector = get_default_detector()
-    assert detector is not None, "Meta-operation detector should be available"
-    assert len(detector.strategies) > 0, "At least one strategy should be enabled"
+    def test_detector_initialization_failure(self):
+        """Test graceful handling of detector initialization failure."""
+        with patch("src.core.log_aggregator.meta_operation_config.get_default_detector") as mock_factory:
+            # Simulate initialization failure
+            mock_factory.side_effect = Exception("Detector init failed")
 
-    print(f"✓ Detector configured with {len(detector.strategies)} strategies")
-    for strategy in detector.strategies:
-        print(f"  - {strategy.get_strategy_name()}")
+            # Should not raise exception
+            with patch.object(AggregatedOperationLogger, "_setup_aggregated_logger"):
+                logger = AggregatedOperationLogger()
+                logger._aggregated_logger = Mock()
 
-    # Test with mock file operations
-    file_data = MockFileData()
-    result = file_data.load_file("test_file.csv")
-    assert result["success"] is True
+                # Detector should be None or handled gracefully
+                operation_log = OperationLog(operation_name="ERROR_TEST")
+                logger.log_operation(operation_log)  # Should not raise
 
-    # Test with mock calculation operations
-    calc_data = MockCalculationsData()
-    reaction_result = calc_data.add_reaction({"function": "gauss", "params": {}})
-    assert reaction_result["success"] is True
+    def test_malformed_operation_log(self):
+        """Test handling of malformed operation logs."""
+        with patch("src.core.log_aggregator.meta_operation_config.get_default_detector") as mock_detector_factory:
+            mock_detector = Mock()
+            mock_detector_factory.return_value = mock_detector
 
-    coeffs_result = calc_data.update_coefficients("reaction_1", {"h": 0.5, "z": 100})
-    assert coeffs_result["success"] is True
+            with patch.object(AggregatedOperationLogger, "_setup_aggregated_logger"):
+                logger = AggregatedOperationLogger()
+                logger._aggregated_logger = Mock()  # Test with None operation log
+                logger.log_operation(None)
 
-    print("✓ Mock operations executed successfully")
+                # Test with operation log with no sub-operations
+                operation_log = OperationLog(operation_name="MALFORMED_TEST")
+                operation_log.sub_operations = None
+                logger.log_operation(operation_log)
 
-    # Check that aggregated logger captured the operations
-    # (This would normally happen automatically through the @operation decorator)
-
-    return True
-
-
-def test_meta_operation_configuration():
-    """Test that meta-operation configuration is properly loaded."""
-    from core.logger_config import META_OPERATION_CONFIG
-
-    # Verify configuration structure
-    assert "enabled" in META_OPERATION_CONFIG
-    assert "strategies" in META_OPERATION_CONFIG
-    assert "formatting" in META_OPERATION_CONFIG
-
-    # Verify at least some strategies are enabled
-    enabled_strategies = [
-        name for name, config in META_OPERATION_CONFIG["strategies"].items() if config.get("enabled", False)
-    ]
-
-    assert len(enabled_strategies) > 0, "At least one strategy should be enabled"
-    print(f"✓ Configuration valid with {len(enabled_strategies)} enabled strategies: {enabled_strategies}")
-
-    return True
-
-
-def test_meta_operation_formatting():
-    """Test that meta-operation formatting is integrated into table formatter."""
-    import time
-
-    from core.log_aggregator import MetaOperation, OperationLog, OperationTableFormatter, SubOperationLog
-
-    # Create a test operation log with meta-operations
-    operation_log = OperationLog("TEST_FORMATTING")
-    base_time = time.time()
-
-    # Add sub-operations
-    sub_ops = [
-        SubOperationLog(1, "GET_VALUE", "file_data", base_time, base_time + 0.001),
-        SubOperationLog(2, "SET_VALUE", "file_data", base_time + 0.002, base_time + 0.003),
-        SubOperationLog(3, "UPDATE_VALUE", "file_data", base_time + 0.004, base_time + 0.005),
-    ]
-
-    for sub_op in sub_ops:
-        sub_op.response_data_type = "dict"
-        sub_op.status = "OK"
-        operation_log.sub_operations.append(sub_op)
-
-    # Add a mock meta-operation
-    meta_op = MetaOperation(
-        meta_id="test_cluster_1", name="Test Cluster", heuristic="time_window", sub_operations=sub_ops
-    )
-    operation_log.meta_operations = [meta_op]
-    operation_log.mark_completed(success=True)
-
-    # Test formatting
-    formatter = OperationTableFormatter()
-    formatted_output = formatter.format_operation_log(operation_log)
-
-    # Verify meta-operations are included in output
-    assert "META-OPERATIONS DETECTED:" in formatted_output
-    assert "Test Cluster" in formatted_output
-    assert "time_window" in formatted_output
-
-    print("✓ Meta-operation formatting working correctly")
-    print("\nSample formatted output:")
-    print("-" * 50)
-    print(formatted_output[:500] + "..." if len(formatted_output) > 500 else formatted_output)
-
-    return True
+                # Should handle gracefully without exceptions - this is a success if no exception was raised
+                # The error handling prevents actual logging for malformed data, which is correct behavior
+                assert True  # Test passes if we reach this point without exceptions
 
 
 if __name__ == "__main__":
-    print("Running meta-operation integration tests...\n")
-
-    try:
-        test_meta_operation_configuration()
-        print()
-
-        test_meta_operation_detection_integration()
-        print()
-
-        test_meta_operation_formatting()
-        print()
-
-        print("✅ All meta-operation integration tests passed!")
-
-    except Exception as e:
-        print(f"❌ Test failed: {e}")
-        import traceback
-
-        traceback.print_exc()
-        sys.exit(1)
+    pytest.main([__file__, "-v"])

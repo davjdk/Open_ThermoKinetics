@@ -318,3 +318,19 @@ class SubOperationLog:
             "time_ms": round(self.duration_ms, 3) if self.duration_ms else 0.0,
             "error": self.error_message or "",
         }
+
+    def __str__(self) -> str:
+        """Return a clean string representation for logging without response_data_raw."""
+        return (
+            f"SubOperationLog(step={self.step_number}, op={self.operation_name}, "
+            f"target={self.target}, status={self.status}, type={self.data_type})"
+        )
+
+    def __repr__(self) -> str:
+        """Return a representation without response_data_raw to keep logs clean."""
+        return (
+            f"SubOperationLog(step_number={self.step_number}, "
+            f"operation_name={self.operation_name}, target={self.target}, "
+            f"start_time={self.start_time}, end_time={self.end_time}, "
+            f"status={self.status}, data_type={self.data_type})"
+        )
