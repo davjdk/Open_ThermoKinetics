@@ -18,7 +18,12 @@ Meta-operation clustering capabilities:
 """
 
 from .aggregated_operation_logger import AggregatedOperationLogger, get_aggregated_logger, log_operation
-from .detection_strategies import NameSimilarityStrategy, TargetSimilarityStrategy, TimeWindowClusterStrategy
+from .detection_strategies import (
+    NameSimilarityStrategy,
+    SequenceCountStrategy,
+    TargetClusterStrategy,
+    TimeWindowStrategy,
+)
 from .error_handler import ErrorAnalysis, ErrorCategory, ErrorSeverity, SubOperationErrorHandler
 from .meta_operation import MetaOperation
 from .meta_operation_config import MetaOperationConfig, create_detector_from_config, get_default_detector
@@ -49,6 +54,7 @@ __all__ = [
     "MetaOperationDetector",
     "MetaOperationStrategy",
     "NameSimilarityStrategy",
-    "TargetSimilarityStrategy",
-    "TimeWindowClusterStrategy",
+    "TargetClusterStrategy",
+    "TimeWindowStrategy",
+    "SequenceCountStrategy",
 ]

@@ -1,12 +1,17 @@
 """
 Meta-operation detection strategies and interfaces.
 
-This module defines the abstract interfaces for meta-operation detection
+This module defines the abstract interfaces         Implements the detailed logic from stage_04_detector_logic.md:
+        1. Check preconditions
+        2. Analyze operations with strategies
+        3. Assign operations to meta-groups
+        4. Post-process and finalize meta-operationseta-operation detection
 strategies and the main detector class that coordinates multiple strategies.
 """
 
+import logging
 from abc import ABC, abstractmethod
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from .meta_operation import MetaOperation
 from .operation_log import OperationLog
@@ -21,9 +26,26 @@ class MetaOperationStrategy(ABC):
     groups of related sub-operations that can be clustered together.
     """
 
+    def __init__(self, config: Dict[str, Any]):
+        """
+        Initialize strategy with configuration.
+
+        Args:
+            config: Strategy-specific configuration parameters
+        """
+        self.config = config
+        self.logger = logging.getLogger(f"solid_state_kinetics.meta_operations.{self.strategy_name}")
+        self.validate_config()
+
+    @property
     @abstractmethod
-    def get_strategy_name(self) -> str:
+    def strategy_name(self) -> str:
         """Return the name of this detection strategy."""
+        pass
+
+    @abstractmethod
+    def validate_config(self) -> None:
+        """Validate strategy configuration parameters."""
         pass
 
     @abstractmethod
@@ -42,12 +64,16 @@ class MetaOperationStrategy(ABC):
         pass
 
     @abstractmethod
-    def configure(self, **kwargs) -> None:
+    def get_meta_operation_description(self, meta_id: str, operations: List[SubOperationLog]) -> str:
         """
-        Configure strategy parameters.
+        Generate description for a meta-operation.
 
         Args:
-            **kwargs: Strategy-specific configuration parameters
+            meta_id: The meta-operation identifier
+            operations: List of operations in the meta-operation
+
+        Returns:
+            str: Human-readable description of the meta-operation
         """
         pass
 
@@ -57,19 +83,220 @@ class MetaOperationDetector:
     Main detector class that coordinates multiple detection strategies.
 
     This class applies configured strategies to identify meta-operations
-    and creates the appropriate MetaOperation objects.
+    and creates the appropriate MetaOperation objects according to the
+    detailed logic defined in stage_04_detector_logic.md.
     """
 
-    def __init__(self, strategies: Optional[List[MetaOperationStrategy]] = None):
+    def __init__(
+        self, strategies: Optional[List[MetaOperationStrategy]] = None, config: Optional[Dict[str, Any]] = None
+    ):
         """
-        Initialize detector with a list of strategies.
+        Initialize detector with strategies and configuration.
 
         Args:
             strategies: List of detection strategies to apply
+            config: General detector configuration
         """
         self.strategies = strategies or []
-        self._meta_operation_counter = 0
+        self.config = config or {}
+        self.enabled = self.config.get("enabled", True)
+        self.logger = logging.getLogger("solid_state_kinetics.meta_operations.detector")
 
+    def detect_meta_operations(self, operation_log: OperationLog) -> None:
+        """
+        Main algorithm for detecting meta-operations.
+
+        Implements the detailed logic from stage_04_detector_logic.md:
+        1. Check preconditions
+        2. Analyze operations with strategies
+        3. Assign operations to meta-groups
+        4. Post-process and finalize meta-operations
+
+        Args:
+            operation_log: The operation log to analyze and modify in-place
+        """
+        # Step 1: Check preconditions
+        if not self.enabled or not self.strategies or not operation_log.sub_operations:
+            operation_log.meta_operations = []
+            return  # Step 2: Create containers for detected groups
+        meta_operations_dict: Dict[str, MetaOperation] = {}
+        operation_assignments: Dict[int, str] = {}  # step_number -> meta_op_id
+
+        # Step 3: Analyze operations with strategies
+        self._analyze_operations_with_strategies(operation_log, meta_operations_dict, operation_assignments)
+
+        # Step 4: Post-process and finalize meta-operations
+        self._finalize_meta_operations(operation_log, meta_operations_dict)
+
+    def _analyze_operations_with_strategies(
+        self,
+        operation_log: OperationLog,
+        meta_operations_dict: Dict[str, MetaOperation],
+        operation_assignments: Dict[int, str],
+    ) -> None:
+        """
+        Apply strategies to operations for detecting groups.
+
+        Args:
+            operation_log: The operation log being analyzed
+            meta_operations_dict: Dictionary to store detected meta-operations
+            operation_assignments: Dictionary to track operation assignments
+        """
+        for sub_op in operation_log.sub_operations:
+            # Check if operation was already assigned
+            if sub_op.step_number in operation_assignments:
+                continue
+
+            # Apply strategies in priority order
+            for strategy in self.strategies:
+                try:
+                    meta_id = strategy.detect(sub_op, operation_log)
+                    if meta_id is not None:
+                        # Assign operation to meta-group
+                        self._assign_operation_to_meta(
+                            sub_op, meta_id, strategy, meta_operations_dict, operation_assignments
+                        )
+                        break  # Use first strategy that matches (priority order)
+
+                except Exception as e:
+                    self.logger.warning(
+                        f"Error in strategy {strategy.strategy_name} for operation {sub_op.step_number}: {e}"
+                    )
+                    continue
+
+    def _assign_operation_to_meta(
+        self,
+        sub_op: SubOperationLog,
+        meta_id: str,
+        strategy: MetaOperationStrategy,
+        meta_operations_dict: Dict[str, MetaOperation],
+        operation_assignments: Dict[int, str],
+    ) -> None:
+        """
+        Assign operation to a meta-group.
+
+        Args:
+            sub_op: The sub-operation to assign
+            meta_id: The meta-operation identifier
+            strategy: The strategy that detected this group
+            meta_operations_dict: Dictionary of meta-operations
+            operation_assignments: Dictionary of operation assignments
+        """
+        # Create new meta-operation if needed
+        if meta_id not in meta_operations_dict:
+            meta_operations_dict[meta_id] = MetaOperation(
+                meta_id=meta_id,
+                strategy_name=strategy.strategy_name,
+                description=strategy.get_meta_operation_description(meta_id, [sub_op]),
+            )
+
+        # Add operation to group
+        meta_operations_dict[meta_id].sub_operations.append(sub_op)
+        operation_assignments[sub_op.step_number] = meta_id
+
+        # Debug logging
+        if self.config.get("debug_mode", False):
+            self.logger.debug(
+                f"Operation {sub_op.step_number} ({sub_op.operation_name}) "
+                f"assigned to meta-operation '{meta_id}' by {strategy.strategy_name}"
+            )
+
+    def _finalize_meta_operations(
+        self, operation_log: OperationLog, meta_operations_dict: Dict[str, MetaOperation]
+    ) -> None:
+        """
+        Finalize detected meta-operations.
+
+        Args:
+            operation_log: The operation log to update
+            meta_operations_dict: Dictionary of detected meta-operations
+        """
+        # Filter groups by minimum size
+        valid_meta_operations = []
+        min_group_size = self.config.get("min_group_size", 2)
+
+        for meta_op in meta_operations_dict.values():
+            if len(meta_op.sub_operations) >= min_group_size:
+                # Sort operations by step_number
+                meta_op.sub_operations.sort(key=lambda op: op.step_number)
+
+                # Calculate metrics
+                meta_op.calculate_metrics()
+
+                # Update description with final data
+                meta_op.description = self._generate_final_description(meta_op)
+
+                valid_meta_operations.append(meta_op)
+            else:
+                # Log filtered groups
+                self.logger.debug(
+                    f"Meta-operation '{meta_op.meta_id}' filtered out: "
+                    f"size {len(meta_op.sub_operations)} < {min_group_size}"
+                )
+
+        # Sort meta-operations by start time
+        valid_meta_operations.sort(key=lambda mo: mo.start_time or 0)
+
+        # Add to operation_log
+        operation_log.meta_operations = valid_meta_operations
+
+        # Log detection statistics
+        if self.config.get("debug_mode", False):
+            self._log_detection_statistics(operation_log, meta_operations_dict)
+
+    def _generate_final_description(self, meta_op: MetaOperation) -> str:
+        """
+        Generate final description for a meta-operation.
+
+        Args:
+            meta_op: The meta-operation to describe
+
+        Returns:
+            str: Final description
+        """
+        if not meta_op.sub_operations:
+            return f"Meta-operation: {meta_op.meta_id}"
+
+        op_count = len(meta_op.sub_operations)
+        strategy = meta_op.strategy_name
+        duration = meta_op.duration_ms
+
+        if duration is not None:
+            return f"{strategy} cluster: {op_count} operations in {duration:.1f}ms"
+        else:
+            return f"{strategy} cluster: {op_count} operations"
+
+    def _log_detection_statistics(
+        self, operation_log: OperationLog, all_meta_operations: Dict[str, MetaOperation]
+    ) -> None:
+        """
+        Log detection statistics for debugging.
+
+        Args:
+            operation_log: The analyzed operation log
+            all_meta_operations: All detected meta-operations before filtering
+        """
+        total_operations = len(operation_log.sub_operations)
+        total_meta_operations = len(operation_log.meta_operations)
+        grouped_operations = sum(len(mo.sub_operations) for mo in operation_log.meta_operations)
+        ungrouped_operations = total_operations - grouped_operations
+
+        # Statistics by strategy
+        strategy_stats = {}
+        for meta_op in operation_log.meta_operations:
+            strategy = meta_op.strategy_name
+            strategy_stats[strategy] = strategy_stats.get(strategy, 0) + 1
+
+        self.logger.debug(
+            f"Meta-operation detection complete:\n"
+            f"  Total operations: {total_operations}\n"
+            f"  Meta-operations created: {total_meta_operations}\n"
+            f"  Operations grouped: {grouped_operations}\n"
+            f"  Operations ungrouped: {ungrouped_operations}\n"
+            f"  Strategy statistics: {strategy_stats}"
+        )
+
+    # Utility methods for external access
     def add_strategy(self, strategy: MetaOperationStrategy) -> None:
         """Add a detection strategy to the detector."""
         self.strategies.append(strategy)
@@ -85,7 +312,7 @@ class MetaOperationDetector:
             bool: True if strategy was found and removed, False otherwise
         """
         for i, strategy in enumerate(self.strategies):
-            if strategy.get_strategy_name() == strategy_name:
+            if strategy.strategy_name == strategy_name:
                 del self.strategies[i]
                 return True
         return False
@@ -94,63 +321,14 @@ class MetaOperationDetector:
         """Remove all strategies from the detector."""
         self.strategies.clear()
 
-    def detect_meta_operations(self, operation_log: OperationLog) -> None:
-        """
-        Detect and create meta-operations within the given operation log.
-
-        This method modifies the operation_log in-place by adding a
-        meta_operations attribute containing detected MetaOperation objects.
-
-        Args:
-            operation_log: The operation log to analyze
-        """
-        if not self.strategies or not operation_log.sub_operations:
-            # No strategies configured or no operations to analyze
-            operation_log.meta_operations = []
-            return
-
-        # Dictionary to collect operations by meta-operation ID
-        meta_groups: Dict[str, List[SubOperationLog]] = {}
-        # Apply each strategy to each sub-operation
-        for sub_op in operation_log.sub_operations:
-            for strategy in self.strategies:
-                try:
-                    meta_id = strategy.detect(sub_op, operation_log)
-                    if meta_id is not None:
-                        # Found a meta-operation match
-                        if meta_id not in meta_groups:
-                            meta_groups[meta_id] = []
-                        meta_groups[meta_id].append(sub_op)
-                        # Use first strategy that matches (priority order)
-                        break
-                except Exception:
-                    # Log error but continue with other strategies
-                    # This ensures detection errors don't break the logging system
-                    pass
-
-        # Create MetaOperation objects from grouped operations
-        meta_operations = []
-        for meta_id, sub_ops in meta_groups.items():
-            if len(sub_ops) > 1:  # Only create meta-operations for groups of 2+
-                # Extract strategy name from meta_id (assuming format "strategy_name_id")
-                strategy_name = meta_id.split("_")[0] if "_" in meta_id else "unknown"
-
-                meta_op = MetaOperation(
-                    meta_id=meta_id,
-                    name=f"Meta-operation {self._meta_operation_counter + 1}",
-                    heuristic=strategy_name,
-                    sub_operations=sub_ops,
-                )
-                meta_operations.append(meta_op)
-                self._meta_operation_counter += 1
-
-        # Add meta_operations attribute to operation_log
-        operation_log.meta_operations = meta_operations
-
     def get_strategy_names(self) -> List[str]:
         """Get names of all configured strategies."""
-        return [strategy.get_strategy_name() for strategy in self.strategies]
+        return [strategy.strategy_name for strategy in self.strategies]
 
     def is_enabled(self) -> bool:
         """Check if detector has any enabled strategies."""
-        return len(self.strategies) > 0
+        return self.enabled and len(self.strategies) > 0
+
+    def register_component(self, component_name: str) -> None:
+        """Register component for logging purposes."""
+        self.logger.info(f"Registered meta-operation detector component: {component_name}")

@@ -23,8 +23,8 @@ class MetaOperation:
     """
 
     meta_id: str  # Unique identifier for this meta-operation
-    name: str  # Human-readable name/description
-    heuristic: str  # Name of the detection strategy that created this group
+    strategy_name: str  # Name of the detection strategy that created this group
+    description: str = ""  # Human-readable description of the meta-operation
     sub_operations: List[SubOperationLog] = field(default_factory=list)
     start_time: Optional[float] = None  # Start time of first operation in group
     end_time: Optional[float] = None  # End time of last operation in group
@@ -32,15 +32,22 @@ class MetaOperation:
 
     def __post_init__(self):
         """Calculate timing information from sub-operations."""
-        if self.sub_operations:
-            self.start_time = min(sub_op.start_time for sub_op in self.sub_operations)
+        self.calculate_metrics()
 
-            # Calculate end time from operations that have completed
-            completed_ops = [sub_op for sub_op in self.sub_operations if sub_op.end_time is not None]
-            if completed_ops:
-                self.end_time = max(sub_op.end_time for sub_op in completed_ops)
-                if self.start_time is not None and self.end_time is not None:
-                    self.execution_time = self.end_time - self.start_time
+    def calculate_metrics(self) -> None:
+        """Calculate timing and performance metrics from sub-operations."""
+        if not self.sub_operations:
+            return
+
+        # Calculate timing metrics
+        self.start_time = min(sub_op.start_time for sub_op in self.sub_operations if sub_op.start_time is not None)
+
+        # Calculate end time from operations that have completed
+        completed_ops = [sub_op for sub_op in self.sub_operations if sub_op.end_time is not None]
+        if completed_ops:
+            self.end_time = max(sub_op.end_time for sub_op in completed_ops)
+            if self.start_time is not None and self.end_time is not None:
+                self.execution_time = self.end_time - self.start_time
 
     @property
     def duration_ms(self) -> Optional[float]:

@@ -8,13 +8,10 @@ including strategy registration, parameter configuration, and factory methods.
 from typing import Any, Dict, List, Optional, Type
 
 from .detection_strategies import (
-    FrequencyThresholdStrategy,
     NameSimilarityStrategy,
-    RequestParametersStrategy,
     SequenceCountStrategy,
     TargetClusterStrategy,
-    TargetSimilarityStrategy,
-    TimeWindowClusterStrategy,
+    TimeWindowStrategy,
 )
 from .meta_operation_detector import MetaOperationDetector, MetaOperationStrategy
 
@@ -28,48 +25,24 @@ class MetaOperationConfig:
     """  # Registry of available strategy classes
 
     STRATEGY_REGISTRY: Dict[str, Type[MetaOperationStrategy]] = {
-        "time_window": TimeWindowClusterStrategy,
+        "time_window": TimeWindowStrategy,
         "name_similarity": NameSimilarityStrategy,
-        "target_similarity": TargetSimilarityStrategy,
-        "request_parameters": RequestParametersStrategy,
-        "sequence_count": SequenceCountStrategy,
-        "frequency_threshold": FrequencyThresholdStrategy,
         "target_cluster": TargetClusterStrategy,
-    }
-
-    # Default configuration for each strategy
+        "sequence_count": SequenceCountStrategy,
+    }  # Default configuration for each strategy
     DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "time_window": {
-            "time_window_ms": 50.0,
+            "window_ms": 50.0,
+            "min_cluster_size": 2,
         },
         "name_similarity": {
-            "name_pattern": "GET_.*|SET_.*|UPDATE_.*",
-            "prefix_length": 3,
-            "case_sensitive": False,
-        },
-        "target_similarity": {
-            "min_sequence_length": 2,
-        },
-        "request_parameters": {
-            "target_grouping": True,
-            "kwargs_similarity": 0.7,
-            "ignore_params": ["timestamp", "request_id"],
-        },
-        "sequence_count": {
-            "min_sequence": 3,
-            "operation_types": [],
-            "status_filter": ["OK", "Error"],
-        },
-        "frequency_threshold": {
-            "freq_threshold": 5,
-            "freq_window_ms": 1000,
-            "operation_whitelist": [],
+            "min_cluster_size": 2,
         },
         "target_cluster": {
-            "target_list": ["file_data", "series_data", "calculation_data"],
-            "max_gap": 1,
-            "strict_sequence": False,
             "min_cluster_size": 2,
+        },
+        "sequence_count": {
+            "min_sequence_length": 3,
         },
     }
 
@@ -81,7 +54,7 @@ class MetaOperationConfig:
                     "name": "time_window",
                     "priority": 1,
                     "params": {
-                        "time_window_ms": 50,
+                        "window_ms": 50,
                     },
                 }
             ]
@@ -92,7 +65,7 @@ class MetaOperationConfig:
                     "name": "time_window",
                     "priority": 1,
                     "params": {
-                        "time_window_ms": 50,
+                        "window_ms": 50,
                     },
                 },
                 {
@@ -122,7 +95,7 @@ class MetaOperationConfig:
                     "name": "time_window",
                     "priority": 1,
                     "params": {
-                        "time_window_ms": 100,
+                        "window_ms": 100,
                     },
                 },
                 {
@@ -423,8 +396,8 @@ class MetaOperationConfig:
 DEFAULT_META_OPERATION_CONFIG = MetaOperationConfig()
 
 # Configure with reasonable defaults
-DEFAULT_META_OPERATION_CONFIG.enable_strategy("time_window", {"time_window_ms": 50.0})
-DEFAULT_META_OPERATION_CONFIG.enable_strategy("target_similarity", {"min_sequence_length": 3})
+DEFAULT_META_OPERATION_CONFIG.enable_strategy("time_window", {"window_ms": 50.0})
+DEFAULT_META_OPERATION_CONFIG.enable_strategy("target_cluster", {"min_cluster_size": 3})
 
 
 def get_default_detector() -> Optional[MetaOperationDetector]:
