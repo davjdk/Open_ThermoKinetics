@@ -61,32 +61,53 @@ def get_data_type(data: Any) -> str:
 
 def _get_dict_type(data: Dict) -> str:
     """Helper function to determine dict type."""
+    # Only classify as ErrorDict if it has explicit error structure
     if "success" in data or "error" in data:
+        # If it has error structure but the main content is data, it's just dict
+        if len(data) > 1 and any(key not in ["success", "error", "message"] for key in data):
+            return "dict"
         return "ErrorDict"
     return "dict"
 
 
 def _handle_dict_response(response_data: dict) -> str:
     """Handle dictionary response format."""
-    data = response_data.get("data")
-    if data is None:
-        return "Error"
+    # Check for wrapped data structure first
+    if "data" in response_data:
+        data = response_data.get("data")
+        if data is None:
+            return "Error"
 
-    # Check for explicit success/error structure
-    if isinstance(data, dict):
-        # Look for success field
-        if "success" in data:
-            return "OK" if data["success"] else "Error"
-        # Look for error field
-        if "error" in data:
-            return "Error" if data["error"] else "OK"
+        # Check for explicit success/error structure
+        if isinstance(data, dict):
+            # Look for success field
+            if "success" in data:
+                return "OK" if data["success"] else "Error"
+            # Look for error field
+            if "error" in data:
+                return "Error" if data["error"] else "OK"
 
-    # If data is boolean, use it directly
-    if isinstance(data, bool):
-        return "OK" if data else "Error"
+        # If data is boolean, use it directly
+        if isinstance(data, bool):
+            return "OK" if data else "Error"
 
-    # If we got here, assume operation was successful
-    return "OK"
+        # If we got here, assume operation was successful
+        return "OK"
+
+    # Check for direct success/error structure (no "data" wrapper)
+    if "success" in response_data:
+        return "OK" if response_data["success"] else "Error"
+
+    if "error" in response_data:
+        return "Error" if response_data["error"] else "OK"
+
+    # If it's a non-empty dict without explicit success/error indicators,
+    # assume it contains valid data and is successful
+    if response_data:
+        return "OK"
+
+    # Empty dict is considered an error
+    return "Error"
 
 
 def _handle_non_dict_response(response_data: Any) -> str:
@@ -232,13 +253,14 @@ class SubOperationLog:
             if isinstance(response_data, dict):
                 data = response_data.get("data", {})
                 if isinstance(data, dict) and "error" in data:
-                    self.error_message = str(data["error"])
-
-        # Determine data type
-        if response_data is not None and isinstance(response_data, dict) and "data" in response_data:
-            self.data_type = get_data_type(response_data["data"])
+                    self.error_message = str(data["error"])  # Determine data type
+        if response_data is not None:
+            if isinstance(response_data, dict) and "data" in response_data:
+                self.data_type = get_data_type(response_data["data"])
+            else:
+                self.data_type = get_data_type(response_data)
         else:
-            self.data_type = get_data_type(response_data) if response_data is not None else "None"
+            self.data_type = "None"
 
         # Analyze error if status is Error
         if self.status == "Error":

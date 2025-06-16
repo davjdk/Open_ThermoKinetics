@@ -29,19 +29,27 @@ class OperationTableFormatter:
     - Operation headers with unique IDs and timestamps
     - Sub-operations table with proper column alignment
     - Operation summary with statistics
-    - Error blocks for operations with failures
-    """
+    - Error blocks for operations with failures"""
 
-    def __init__(self, table_format: str = "grid", max_cell_width: int = 50):
+    def __init__(
+        self,
+        table_format: str = "grid",
+        max_cell_width: int = 50,
+        include_error_details: bool = True,
+        max_error_context_items: int = 5,
+    ):
         """
         Initialize the table formatter.
 
         Args:
             table_format: Tabulate table format (grid, plain, simple, etc.)
             max_cell_width: Maximum width for table cells to prevent overly wide output
-        """
+            include_error_details: Whether to include detailed error blocks
+            max_error_context_items: Maximum number of context items to display"""
         self.table_format = table_format
         self.max_cell_width = max_cell_width
+        self.include_error_details = include_error_details
+        self.max_error_context_items = max_error_context_items
         self._operation_counter = 0  # Simple counter for unique operation IDs
 
     def format_operation_log(self, operation_log: OperationLog) -> str:
@@ -52,7 +60,7 @@ class OperationTableFormatter:
             operation_log: The OperationLog instance to format
 
         Returns:
-            str: Formatted operation log as a string
+            str: Complete formatted operation log
         """
         if operation_log is None:
             return "No operation data available."
@@ -61,31 +69,45 @@ class OperationTableFormatter:
         self._operation_counter += 1
         operation_id = self._operation_counter
 
-        # Build formatted output parts
         parts = []
 
-        # 1. Operation header
+        # 1. Header separator
+        parts.append("=" * 80)
+
+        # 2. Operation header
         header = self._format_operation_header(operation_log, operation_id)
         parts.append(header)
+        parts.append("")  # Empty line
 
-        # 2. Sub-operations table (if any)
+        # 3. Sub-operations table
         if operation_log.sub_operations:
-            sub_ops_table = self._format_sub_operations_table(operation_log.sub_operations)
-            parts.append(sub_ops_table)
+            table = self._format_sub_operations_table(operation_log.sub_operations)
+            parts.append(table)
         else:
             parts.append("No sub-operations recorded.")
+        parts.append("")  # Empty line
 
-        # 3. Error block (if operation failed)
+        # 4. Error details block (NEW)
+        if self.include_error_details:
+            error_block = self._format_error_details_block(operation_log)
+            if error_block:
+                parts.append(error_block)
+                parts.append("")  # Empty line
+
+        # 5. Main operation error block (if operation failed)
         if operation_log.status == "error" and operation_log.exception_info:
-            error_block = self._format_error_block(operation_log.exception_info)
-            parts.append(error_block)
+            main_error_block = self._format_error_block(operation_log.exception_info)
+            parts.append(main_error_block)
+            parts.append("")  # Empty line
 
-        # 4. Operation summary
+        # 6. Operation summary
         summary = self._format_operation_summary(operation_log, operation_id)
         parts.append(summary)
 
-        # Join all parts with empty lines for readability
-        return "\n\n".join(parts) + "\n"
+        # 7. Footer separator
+        parts.append("=" * 80)
+
+        return "\n".join(parts) + "\n"
 
     def _format_operation_header(self, operation_log: OperationLog, operation_id: int) -> str:
         """
@@ -185,6 +207,82 @@ class OperationTableFormatter:
         truncated_error = self._truncate_text(exception_info, 200)
 
         return f"ERROR: {truncated_error}"
+
+    def _format_error_details_block(self, operation_log: OperationLog) -> str:
+        """
+        Format detailed error information for sub-operations with errors.
+
+        Args:
+            operation_log: The operation log data
+
+        Returns:
+            str: Formatted error details block
+        """
+        error_sub_operations = [
+            sub_op
+            for sub_op in operation_log.sub_operations
+            if sub_op.status == "Error" and sub_op.has_detailed_error()
+        ]
+
+        if not error_sub_operations:
+            return ""
+
+        lines = ["ERROR DETAILS:"]
+        lines.append("─" * 77)  # Separator line
+
+        for sub_op in error_sub_operations:
+            error_block = self._format_single_error_details(sub_op)
+            lines.append(error_block)
+            lines.append("")  # Empty line between errors
+
+        lines.append("─" * 77)  # Bottom separator
+
+        return "\n".join(lines)
+
+    def _format_single_error_details(self, sub_operation) -> str:
+        """
+        Format detailed information for a single sub-operation error.
+
+        Args:
+            sub_operation: SubOperationLog with error details
+
+        Returns:
+            str: Formatted error information"""
+        if not sub_operation.has_detailed_error():
+            return (
+                f"Step {sub_operation.step_number}: {sub_operation.clean_operation_name} → "
+                f"{sub_operation.target}\n  Error: {sub_operation.get_error_summary()}"
+            )
+
+        error_details = sub_operation.error_details
+        lines = []
+
+        # Header line
+        lines.append(f"Step {sub_operation.step_number}: {sub_operation.clean_operation_name} → {sub_operation.target}")
+
+        # Error type and severity
+        lines.append(f"  Error Type: {error_details.error_type.value.upper()}")
+        lines.append(f"  Severity: {error_details.severity.value.upper()}")
+
+        # Error message
+        lines.append(f"  Message: {error_details.error_message}")
+
+        # Context information
+        if error_details.error_context:
+            lines.append("  Context:")
+            context_items = list(error_details.error_context.items())[: self.max_error_context_items]
+            for key, value in context_items:
+                lines.append(f"    - {key}: {value}")
+
+        # Technical details
+        if error_details.technical_details:
+            lines.append(f"  Technical Details: {error_details.technical_details}")
+
+        # Suggested action
+        if error_details.suggested_action:
+            lines.append(f"  Suggested Action: {error_details.suggested_action}")
+
+        return "\n".join(lines)
 
     def _format_simple_table(self, headers: List[str], table_data: List[List]) -> str:
         """

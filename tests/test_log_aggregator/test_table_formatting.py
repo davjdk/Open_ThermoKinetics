@@ -212,6 +212,53 @@ class TestOperationTableFormatter:
         # The actual response data doesn't appear in the table, just the data type
         assert "str" in result  # Data type shows as 'str'
 
+    def test_format_operation_log_with_error_details(self):
+        """Test complete operation log formatting with error details."""
+        # Create operation with sub-operations having errors
+        op_log = OperationLog(operation_name="MODEL_FIT_CALCULATION", start_time=time.time())
+
+        # Create sub-operations with different statuses
+        sub_op1 = SubOperationLog(
+            step_number=1, operation_name="GET_SERIES_VALUE", target="series_data", start_time=time.time()
+        )
+        sub_op1.mark_completed(response_data=None)  # Error case
+        sub_op1.status = "Error"
+
+        sub_op2 = SubOperationLog(
+            step_number=2, operation_name="MODEL_FIT_CALC", target="model_fit_calculation", start_time=time.time()
+        )
+        sub_op2.mark_completed(response_data={"success": True, "data": {"result": "ok"}})
+
+        op_log.sub_operations = [sub_op1, sub_op2]
+        op_log.mark_completed(success=True)
+
+        # Test with error details enabled
+        formatter = OperationTableFormatter(include_error_details=True)
+        result = formatter.format_operation_log(op_log)
+
+        assert "MODEL_FIT_CALCULATION" in result
+        assert "=" * 80 in result  # Header separator
+        assert "GET_SERIES_VALUE" in result
+        assert "MODEL_FIT_CALC" in result
+
+    def test_configurable_error_details(self):
+        """Test configurable error details inclusion."""
+        op_log = OperationLog(operation_name="TEST_OPERATION", start_time=time.time())
+        op_log.mark_completed(success=True)
+
+        # Test with error details disabled
+        formatter = OperationTableFormatter(include_error_details=False)
+        result = formatter.format_operation_log(op_log)
+
+        assert "ERROR DETAILS:" not in result
+
+        # Test with error details enabled
+        formatter.include_error_details = True
+        result = formatter.format_operation_log(op_log)
+
+        # Should not contain error details since there are no errors
+        assert "ERROR DETAILS:" not in result
+
 
 class TestFormatOperationLogFunction:
     """Test cases for the format_operation_log convenience function."""

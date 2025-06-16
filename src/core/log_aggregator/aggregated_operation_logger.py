@@ -38,13 +38,18 @@ class AggregatedOperationLogger:
             cls._instance = super().__new__(cls)
         return cls._instance
 
-    def __init__(self):
-        """Initialize the aggregated operation logger (only once)."""
+    def __init__(self, include_error_details: bool = True):
+        """
+        Initialize the aggregated operation logger (only once).
+
+        Args:
+            include_error_details: Whether to include detailed error information
+        """
         if self._initialized:
             return
 
         self._logger_name = "solid_state_kinetics.operations"
-        self._formatter = OperationTableFormatter()
+        self._formatter = OperationTableFormatter(include_error_details=include_error_details)
         self._main_logger = LoggerManager.get_logger(__name__)
 
         # Initialize the aggregated logger
@@ -162,6 +167,25 @@ class AggregatedOperationLogger:
             bool: True if logger is configured and ready to use
         """
         return self._aggregated_logger is not None and self._initialized
+
+    def set_error_details_enabled(self, enabled: bool) -> None:
+        """
+        Enable or disable detailed error logging.
+
+        Args:
+            enabled: Whether to include detailed error information
+        """
+        if self._formatter:
+            self._formatter.include_error_details = enabled
+
+    def get_error_details_enabled(self) -> bool:
+        """
+        Check if detailed error logging is enabled.
+
+        Returns:
+            bool: True if detailed error logging is enabled
+        """
+        return self._formatter.include_error_details if self._formatter else True
 
 
 # Convenience function for getting the singleton instance
