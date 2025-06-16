@@ -122,14 +122,12 @@ class OperationTableFormatter:
             "Result data type",  # Result data type
             "Status",  # Status (OK/Error)
             "Time, s",  # Duration in seconds
-        ]
-
-        # Build table data
+        ]  # Build table data
         table_data = []
         for sub_op in sub_operations:
             row = [
                 sub_op.step_number,
-                self._truncate_text(sub_op.operation_name, 20),
+                sub_op.clean_operation_name,
                 self._truncate_text(sub_op.target, 15),
                 self._truncate_text(sub_op.data_type or "unknown", 20),
                 sub_op.status,

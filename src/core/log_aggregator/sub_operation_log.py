@@ -15,8 +15,6 @@ from typing import Any, Dict, Optional
 
 import pandas as pd
 
-from ..app_settings import OperationType
-
 
 def get_data_type(data: Any) -> str:
     """
@@ -188,19 +186,37 @@ class SubOperationLog:
         return None
 
     @property
+    def clean_operation_name(self) -> str:
+        """
+        Get operation name without OperationType prefix.
+
+        Returns:
+            str: Clean operation name (e.g., 'CHECK_FILE_EXISTS' instead of 'OperationType.CHECK_FILE_EXISTS')
+        """  # Convert enum to string if needed
+        operation_name_str = str(self.operation_name)
+
+        # Handle OperationType enum objects
+        if hasattr(self.operation_name, "name"):
+            # This is likely an enum object, return the enum name
+            return self.operation_name.name
+
+        # Handle string representations
+        if operation_name_str.startswith("OperationType."):
+            return operation_name_str[len("OperationType.") :]
+
+        # Handle enum string representation
+        if "." in operation_name_str:
+            parts = operation_name_str.split(".")
+            if len(parts) >= 2 and parts[0] == "OperationType":
+                return parts[1]
+
+        # Fallback to original name if no prefix found
+        return operation_name_str
+
+    @property
     def operation_display_name(self) -> str:
         """Get a display-friendly operation name."""
-        # Try to convert OperationType enum to string if possible
-        try:
-            if hasattr(OperationType, self.operation_name):
-                return self.operation_name
-            # If it's already a string from OperationType.value
-            for op_type in OperationType:
-                if op_type.value == self.operation_name:
-                    return op_type.name
-            return self.operation_name
-        except Exception:
-            return self.operation_name
+        return self.clean_operation_name
 
     def to_dict(self) -> Dict[str, Any]:
         """Convert sub-operation log to dictionary format."""
