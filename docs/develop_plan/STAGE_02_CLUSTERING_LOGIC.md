@@ -1,207 +1,246 @@
-# Этап 2: Реализация логики кластеризации подопераций
+# Этап 2: Условия и логика кластеризации BaseSignalsBurst
 
-## Цель этапа  
-Реализовать основную логику кластеризации операций `base_signals` по временным окнам, включая обработку промежуточных "шумовых" операций.
+## Обновленная логика на основе архитектурного анализа
 
-## Задачи
+### Фундаментальные критерии идентификации
 
-### 2.1 Алгоритм временной кластеризации
+**Операции BaseSignals определяются через**:
+```python
+def is_base_signals_operation(sub_op: SubOperationLog) -> bool:
+    """Критерии идентификации base_signals операций."""
+    return (
+        sub_op.caller_info.filename == "base_signals.py" and
+        sub_op.caller_info.line_number == 51 and
+        len(sub_op.sub_operations) == 0 and  # Атомарность
+        sub_op.duration_ms <= 10.0  # Микрооперации
+    )
+```
 
-**Основная логика в методе detect():**
+**Целевые типы операций**:
+- `SET_VALUE` - установка значений в структурах данных
+- `GET_VALUE` - получение значений из модулей  
+- `UPDATE_VALUE` - обновление существующих параметров
+- `CHECK_*` - валидационные операции
+- `LOAD_*` / `SAVE_*` - операции с данными
+
+### Context-Aware временная группировка
+
+**Принцип кластеризации**: операции группируются не только по временной близости, но и по принадлежности к одному thread-local контексту операции.
+
+```python
+def group_by_temporal_and_contextual_proximity(candidates: List[SubOperationLog], 
+                                               context: OperationLog) -> List[List[SubOperationLog]]:
+    """
+    Группировка операций по временной близости И контекстной связанности.
+    
+    Args:
+        candidates: Отфильтрованные base_signals операции
+        context: Полный контекст родительской операции
+    """
+    # Все кандидаты уже принадлежат одному контексту (thread-local operation)
+    # Поэтому группируем только по времени
+    
+    window_ms = config["time_window_ms"] / 1000.0  # 100ms default
+    max_gap_ms = config.get("max_gap_ms", 50) / 1000.0  # 50ms max gap
+    
+    clusters = []
+    current_cluster = []
+    
+    candidates.sort(key=lambda op: op.start_time)
+    
+    for op in candidates:
+        if not current_cluster:
+            current_cluster = [op]
+        else:
+            last_op = current_cluster[-1]
+            gap = op.start_time - last_op.start_time
+            
+            if gap <= window_ms and gap <= max_gap_ms:
+                current_cluster.append(op)
+            else:
+                # Завершить текущий кластер если он достаточно большой
+                if len(current_cluster) >= config.get("min_burst_size", 2):
+                    clusters.append(current_cluster)
+                current_cluster = [op]
+    
+    # Финальный кластер
+    if len(current_cluster) >= config.get("min_burst_size", 2):
+        clusters.append(current_cluster)
+    
+    return clusters
+```
+
+## Реальные паттерны бурстов (из архитектурного анализа)
+
+### Паттерн 1: Parameter Update Burst (UPDATE_VALUE операции)
+```log
+Временной ряд: t+0ms, t+15ms, t+32ms, t+45ms
+base_signals.py:51 "GET_VALUE"      → calculations_data    # Получение текущего значения
+base_signals.py:51 "CHECK_PATH"     → calculations_data    # Валидация path_keys
+base_signals.py:51 "SET_VALUE"      → calculations_data    # Установка нового значения  
+base_signals.py:51 "UPDATE_VALUE"   → calculations_data    # Обновление зависимых параметров
+
+Реальный актор: main_window.py:456 "_handle_update_value"
+Бурст создается: 4 операции, 45ms, 100% успешно
+```
+
+### Паттерн 2: Add Reaction Burst (ADD_REACTION операции)
+```log
+Временной ряд: t+0ms, t+8ms, t+12ms, t+18ms, t+25ms
+base_signals.py:51 "SET_VALUE"      → calculations_data    # Создание структуры реакции
+base_signals.py:51 "GET_VALUE"      → calculations_data    # Получение параметров
+base_signals.py:51 "UPDATE_VALUE"   → calculations_data    # Обновление коэффициентов
+base_signals.py:51 "SET_VALUE"      → calculations_data    # Установка границ оптимизации
+base_signals.py:51 "UPDATE_VALUE"   → calculations_data    # Финальное обновление
+
+Реальный актор: main_window.py:439 "_handle_add_reaction"  
+Бурст создается: 5 операций, 25ms, 100% успешно
+```
+
+### Паттерн 3: Multi-target Burst (смешанные операции)
+```log
+Временной ряд: t+0ms, t+5ms, t+18ms
+base_signals.py:51 "GET_DF_DATA"    → file_data           # Получение данных для визуализации
+base_signals.py:51 "GET_VALUE"      → calculations_data    # Получение параметров реакции
+base_signals.py:51 "HIGHLIGHT_*"    → calculations_data    # Активация подсветки
+
+Реальный актор: main_window.py:446 "_handle_highlight_reaction"
+Бурст создается: 3 операции, 18ms, смешанные targets
+```
+
+## Обновленный алгоритм кластеризации
+
+### Основная функция detect()
 
 ```python
 def detect(self, sub_op: SubOperationLog, context: OperationLog) -> Optional[str]:
     """
-    Обнаружение принадлежности операции к base_signals кластеру.
+    Обнаружение принадлежности операции к BaseSignals burst.
     
-    Логика:
-    1. Проверяем, является ли sub_op операцией base_signals
-    2. Находим все близкие операции base_signals в временном окне
-    3. Включаем промежуточные операции как шум
-    4. Генерируем meta_id для кластера
+    Args:
+        sub_op: Анализируемая подоперация
+        context: Полный контекст родительской операции
+        
+    Returns:
+        meta_id если операция принадлежит бурсту, иначе None
     """
+    # Фильтрация: только base_signals операции
     if not self._is_base_signals_operation(sub_op):
         return None
     
-    # Поиск операций base_signals в окне времени
-    window_seconds = self.config["window_ms"] / 1000.0
-    cluster_operations = self._find_time_window_cluster(sub_op, context, window_seconds)
+    # Поиск всех base_signals операций в контексте
+    base_signals_ops = [
+        op for op in context.sub_operations 
+        if self._is_base_signals_operation(op)
+    ]
     
-    # Проверка минимального размера кластера
-    min_size = self.config.get("min_cluster_size", 2)
-    base_signals_count = sum(1 for op in cluster_operations 
-                            if self._is_base_signals_operation(op))
+    # Группировка по временной близости
+    clusters = self._group_by_temporal_proximity(base_signals_ops)
     
-    if base_signals_count < min_size:
-        return None
+    # Найти кластер, содержащий текущую операцию
+    for i, cluster in enumerate(clusters):
+        if sub_op in cluster:
+            # Генерация стабильного meta_id на основе первой операции кластера
+            first_op = min(cluster, key=lambda op: op.start_time)
+            meta_id = f"base_signals_burst_{int(first_op.start_time * 1000)}_{i}"
+            return meta_id
     
-    # Генерация уникального ID кластера
-    return self._generate_cluster_id(cluster_operations[0])
+    return None
 ```
 
-### 2.2 Поиск операций в временном окне
-
-```python
-def _find_time_window_cluster(self, sub_op: SubOperationLog, 
-                             context: OperationLog, 
-                             window_seconds: float) -> List[SubOperationLog]:
-    """
-    Находит все операции в временном окне, включая промежуточные.
-    
-    Args:
-        sub_op: Текущая операция base_signals
-        context: Полный лог операции
-        window_seconds: Размер временного окна в секундах
-    
-    Returns:
-        List[SubOperationLog]: Операции в кластере (base_signals + шум)
-    """
-    if not sub_op.start_time:
-        return [sub_op]
-    
-    cluster_ops = []
-    base_signals_times = []
-    
-    # Сбор всех операций base_signals в окне
-    for op in context.sub_operations:
-        if not op.start_time:
-            continue
-            
-        if self._is_base_signals_operation(op):
-            time_diff = abs(op.start_time - sub_op.start_time)
-            if time_diff <= window_seconds:
-                base_signals_times.append(op.start_time)
-                cluster_ops.append(op)
-    
-    # Если нашли только одну операцию base_signals - не кластер
-    if len([op for op in cluster_ops if self._is_base_signals_operation(op)]) < 2:
-        return []
-    
-    # Определение временных границ кластера
-    min_time = min(base_signals_times)
-    max_time = max(base_signals_times)
-    
-    # Добавление промежуточных операций (шум) 
-    if self.config.get("include_noise", True):
-        noise_ops = self._collect_noise_operations(context, min_time, max_time)
-        cluster_ops.extend(noise_ops)
-    
-    # Сортировка по времени выполнения
-    cluster_ops.sort(key=lambda x: x.start_time or 0)
-    return cluster_ops
-```
-
-### 2.3 Сбор промежуточных операций (шум)
-
-```python  
-def _collect_noise_operations(self, context: OperationLog, 
-                             min_time: float, max_time: float) -> List[SubOperationLog]:
-    """
-    Собирает операции других модулей между base_signals операциями.
-    
-    Args:
-        context: Полный лог операции
-        min_time: Начало временного интервала кластера
-        max_time: Конец временного интервала кластера
-    
-    Returns:
-        List[SubOperationLog]: Промежуточные операции (шум)
-    """
-    noise_operations = []
-    
-    for op in context.sub_operations:
-        if not op.start_time:
-            continue
-            
-        # Операция в временных границах кластера
-        if min_time <= op.start_time <= max_time:
-            # Но не является операцией base_signals
-            if not self._is_base_signals_operation(op):
-                noise_operations.append(op)
-    
-    return noise_operations
-```
-
-### 2.4 Генерация идентификаторов кластеров
-
-```python
-def _generate_cluster_id(self, first_operation: SubOperationLog) -> str:
-    """
-    Генерирует уникальный идентификатор для кластера.
-    
-    Args:
-        first_operation: Первая операция кластера по времени
-    
-    Returns:
-        str: Уникальный ID кластера
-    """
-    # Используем timestamp первой операции для уникальности
-    timestamp = int(first_operation.start_time * 1000) if first_operation.start_time else 0
-    return f"base_signals_burst_{timestamp}_{first_operation.step_number}"
-```
-
-### 2.5 Улучшенная проверка base_signals операций
+### Вспомогательные функции
 
 ```python
 def _is_base_signals_operation(self, sub_op: SubOperationLog) -> bool:
-    """
-    Проверяет, относится ли операция к модулю base_signals.
+    """Проверка является ли операция base_signals операцией."""
+    return (
+        sub_op.caller_info.filename == "base_signals.py" and
+        sub_op.caller_info.line_number == 51 and
+        len(sub_op.sub_operations) == 0 and
+        sub_op.duration_ms <= self.config.get("max_duration_ms", 10.0)
+    )
+
+def _group_by_temporal_proximity(self, operations: List[SubOperationLog]) -> List[List[SubOperationLog]]:
+    """Группировка операций по временной близости."""
+    if not operations:
+        return []
     
-    Анализирует поля target и operation_name для определения принадлежности.
+    operations.sort(key=lambda op: op.start_time)
     
-    Args:
-        sub_op: Подоперация для анализа
+    clusters = []
+    current_cluster = [operations[0]]
     
-    Returns:
-        bool: True если операция относится к base_signals
-    """
-    # Прямая проверка по target
-    if sub_op.target == "base_signals":
-        return True
+    for op in operations[1:]:
+        gap = op.start_time - current_cluster[-1].start_time
+        window_sec = self.config["time_window_ms"] / 1000.0
+        max_gap_sec = self.config.get("max_gap_ms", 50) / 1000.0
+        
+        if gap <= window_sec and gap <= max_gap_sec:
+            current_cluster.append(op)
+        else:
+            if len(current_cluster) >= self.config.get("min_burst_size", 2):
+                clusters.append(current_cluster)
+            current_cluster = [op]
     
-    # Проверка по названию операции (может содержать базовые сигнальные операции)
-    operation_lower = sub_op.operation_name.lower() if sub_op.operation_name else ""
-    if "signal" in operation_lower or "request" in operation_lower:
-        return True
+    # Финальный кластер
+    if len(current_cluster) >= self.config.get("min_burst_size", 2):
+        clusters.append(current_cluster)
     
-    # Проверка по target (может быть составное имя)  
-    target_lower = str(sub_op.target).lower() if sub_op.target else ""
-    if "base_signals" in target_lower or "signals" in target_lower:
-        return True
-    
-    return False
+    return clusters
 ```
 
-### 2.6 Предотвращение дублирования кластеров
+## Конфигурация стратегии
+
+### Параметры по умолчанию
 
 ```python
-def _is_already_clustered(self, sub_op: SubOperationLog, context: OperationLog) -> bool:
-    """
-    Проверяет, не была ли операция уже включена в другой кластер.
-    
-    Предотвращает создание пересекающихся кластеров.
-    """
-    # Проверяем существующие мета-операции в контексте
-    for meta_op in getattr(context, 'meta_operations', []):
-        if any(op.step_number == sub_op.step_number for op in meta_op.sub_operations):
-            return True
-    return False
+BASE_SIGNALS_BURST_CONFIG = {
+    "enabled": True,
+    "priority": 1,              # Наивысший приоритет среди стратегий
+    "time_window_ms": 100,      # Временное окно группировки
+    "min_burst_size": 2,        # Минимальное количество операций в бурсте
+    "max_gap_ms": 50,          # Максимальный разрыв между операциями
+    "max_duration_ms": 10.0,    # Максимальная длительность одной операции
+    "include_cross_target": True # Включать операции с разными target
+}
 ```
 
-## Результат этапа
-- Полная логика кластеризации операций base_signals  
-- Обработка временных окон и пороговых значений
-- Сбор и маркировка промежуточных операций как шума
-- Предотвращение дублирования кластеров
-- Уникальная генерация идентификаторов кластеров
+### Поведенческие особенности
 
-## Файлы для изменения
-- `src/core/log_aggregator/detection_strategies.py` - реализация методов
+**Приоритет 1**: BaseSignalsBurstStrategy выполняется первой, что позволяет ей "захватить" base_signals операции до обработки другими стратегиями.
 
-## Критерии готовности
-- [ ] detect() возвращает валидные meta_id для операций base_signals
-- [ ] Временное окно корректно обрабатывается (window_ms → секунды)
-- [ ] Минимальный размер кластера проверяется
-- [ ] Промежуточные операции собираются как шум
-- [ ] Кластеры не пересекаются
-- [ ] Идентификаторы кластеров уникальны
+**Cross-target группировка**: операции с разными targets (file_data, calculations_data) группируются в один бурст, если они происходят в рамках одного пользовательского действия.
+
+**Контекстная принадлежность**: операции должны принадлежать одному thread-local контексту (одной родительской @operation).
+
+## Результаты этапа 2
+
+### ✅ Завершенные задачи
+
+1. **✅ Обновлена логика идентификации**: критерии базируются на реальной архитектуре (filename, line_number, атомарность)
+
+2. **✅ Усовершенствован алгоритм группировки**: добавлены max_gap_ms и контекстная проверка
+
+3. **✅ Проанализированы реальные паттерны**: Parameter Update, Add Reaction, Multi-target бурсты
+
+4. **✅ Определена конфигурация**: приоритет 1, временные окна, cross-target поддержка
+
+5. **✅ Разработан detect() алгоритм**: с учетом существующей архитектуры MetaOperationStrategy
+
+### 🎯 Ключевые улучшения
+
+**Context-Aware группировка**: операции группируются не только по времени, но и по принадлежности к одному thread-local контексту.
+
+**Реалистичные паттерны**: алгоритм основан на анализе реальных логов, а не гипотетических сценариев.
+
+**Архитектурная совместимость**: полное соответствие интерфейсу MetaOperationStrategy без нарушения существующих принципов.
+
+### 🚀 Готовность к этапу 3
+
+Логика кластеризации проработана с учетом реальной архитектуры. Алгоритм готов к реализации в виде BaseSignalsBurstStrategy класса.
+
+---
+
+*Этап 2 завершён: 17 июня 2025*  
+*Статус: Готов к формированию мета-операций*  
+*Следующий этап: [STAGE_03_META_OPERATION_STRUCTURE.md](STAGE_03_META_OPERATION_STRUCTURE.md)*
