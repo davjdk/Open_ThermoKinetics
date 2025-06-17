@@ -8,6 +8,7 @@ including strategy registration, parameter configuration, and factory methods.
 from typing import Any, Dict, List, Optional, Type
 
 from .detection_strategies import (
+    BaseSignalsBurstStrategy,
     NameSimilarityStrategy,
     SequenceCountStrategy,
     TargetClusterStrategy,
@@ -22,15 +23,26 @@ class MetaOperationConfig:
 
     This class handles registration of available strategies, configuration
     of strategy parameters, and factory methods for creating detectors.
-    """  # Registry of available strategy classes
+    """
 
+    # Registry of available strategy classes
     STRATEGY_REGISTRY: Dict[str, Type[MetaOperationStrategy]] = {
+        "base_signals_burst": BaseSignalsBurstStrategy,
         "time_window": TimeWindowStrategy,
         "name_similarity": NameSimilarityStrategy,
         "target_cluster": TargetClusterStrategy,
         "sequence_count": SequenceCountStrategy,
-    }  # Default configuration for each strategy
+    }
+
+    # Default configuration for each strategy
     DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
+        "base_signals_burst": {
+            "time_window_ms": 100,
+            "min_burst_size": 2,
+            "max_gap_ms": 50,
+            "max_duration_ms": 10.0,
+            "include_cross_target": True,
+        },
         "time_window": {
             "window_ms": 50.0,
             "min_cluster_size": 2,
@@ -155,6 +167,29 @@ class MetaOperationConfig:
                         "freq_threshold": 7,
                         "freq_window_ms": 500,
                         "operation_whitelist": ["GET_VALUE", "SET_VALUE"],
+                    },
+                },
+            ]
+        },
+        "base_signals_burst_analysis": {
+            "strategies": [
+                {
+                    "name": "base_signals_burst",
+                    "priority": 1,
+                    "params": {
+                        "time_window_ms": 100,
+                        "min_burst_size": 2,
+                        "max_gap_ms": 50,
+                        "max_duration_ms": 10.0,
+                        "include_cross_target": True,
+                    },
+                },
+                {
+                    "name": "target_cluster",
+                    "priority": 2,
+                    "params": {
+                        "target_list": ["file_data", "series_data", "calculation_data"],
+                        "min_cluster_size": 2,
                     },
                 },
             ]

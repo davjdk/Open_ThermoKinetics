@@ -10,13 +10,21 @@ Key components:
 """
 
 import time
-from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from dataclasses import dataclass, field
+from typing import TYPE_CHECKING, Any, Dict, NamedTuple, Optional
 
 import pandas as pd
 
 if TYPE_CHECKING:
     from .error_handler import ErrorAnalysis
+
+
+class CallerInfo(NamedTuple):
+    """Information about the caller of a sub-operation."""
+
+    filename: str
+    line_number: int
+    function_name: str = ""
 
 
 def get_data_type(data: Any) -> str:
@@ -168,11 +176,18 @@ class SubOperationLog:
     data_type: str = "unknown"
     error_message: Optional[str] = None
     request_kwargs: Dict[str, Any] = None
+    caller_info: Optional[CallerInfo] = None
+
+    # Sub-operations field (for compatibility with BaseSignalsBurstStrategy)
+    sub_operations: list = field(default_factory=list)
 
     # New fields for enhanced error handling
     error_details: Optional["ErrorAnalysis"] = None
     exception_traceback: Optional[str] = None
     response_data_raw: Optional[Any] = None  # For error analysis
+
+    # Field for caller information
+    caller_info: Optional[CallerInfo] = None
 
     def __post_init__(self):
         """Initialize with default values if needed."""
@@ -196,6 +211,13 @@ class SubOperationLog:
     def has_detailed_error(self) -> bool:
         """Check if detailed error information is available."""
         return self.error_details is not None
+
+    @property
+    def duration_ms(self) -> float:
+        """Get execution time in milliseconds for compatibility with BaseSignalsBurstStrategy."""
+        if self.execution_time is not None:
+            return self.execution_time * 1000.0  # Convert seconds to milliseconds
+        return 0.0
 
     def get_error_summary(self) -> str:
         """Get brief error description for table display."""
@@ -265,13 +287,6 @@ class SubOperationLog:
         # Analyze error if status is Error
         if self.status == "Error":
             self._analyze_error_if_needed()
-
-    @property
-    def duration_ms(self) -> Optional[float]:
-        """Get execution duration in milliseconds."""
-        if self.execution_time is not None:
-            return self.execution_time * 1000
-        return None
 
     @property
     def clean_operation_name(self) -> str:

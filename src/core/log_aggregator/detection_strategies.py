@@ -12,6 +12,176 @@ from .operation_log import OperationLog
 from .sub_operation_log import SubOperationLog
 
 
+class BaseSignalsBurstStrategy(MetaOperationStrategy):
+    """
+    Groups base_signals.py operations that occur in temporal bursts.
+
+    This strategy specifically targets operations originating from base_signals.py:51
+    that represent atomic inter-module communication bursts. These operations are
+    typically fast, atomic, and occur in rapid succession as part of higher-level
+    user actions.
+
+    Key characteristics:
+    - Operations from base_signals.py, line 51
+    - Atomic operations (no sub-operations)
+    - Fast execution (typically <= 10ms)
+    - Temporal clustering within configurable window
+    - Cross-target support (can group operations with different targets)
+    """
+
+    @property
+    def strategy_name(self) -> str:
+        return "BaseSignalsBurst"
+
+    def validate_config(self) -> None:
+        """Validate BaseSignalsBurst configuration."""
+        required_params = ["time_window_ms", "min_burst_size"]
+        for param in required_params:
+            if param not in self.config:
+                raise ValueError(f"BaseSignalsBurstStrategy missing required parameter: {param}")
+
+        if self.config["time_window_ms"] <= 0:
+            raise ValueError("BaseSignalsBurstStrategy time_window_ms must be positive")
+
+        if self.config["min_burst_size"] < 2:
+            raise ValueError("BaseSignalsBurstStrategy min_burst_size must be >= 2")
+
+        # Validate optional parameters
+        if "max_gap_ms" in self.config and self.config["max_gap_ms"] <= 0:
+            raise ValueError("BaseSignalsBurstStrategy max_gap_ms must be positive")
+
+        if "max_duration_ms" in self.config and self.config["max_duration_ms"] <= 0:
+            raise ValueError("BaseSignalsBurstStrategy max_duration_ms must be positive")
+
+    def detect(self, sub_op: SubOperationLog, context: OperationLog) -> Optional[str]:
+        """
+        Detect if operation belongs to a BaseSignals burst.
+
+        Args:
+            sub_op: The sub-operation to analyze
+            context: The full operation log for context
+
+        Returns:
+            Optional[str]: Meta-operation ID if clustered, None otherwise
+        """
+        # Filter: only base_signals operations
+        if not self._is_base_signals_operation(sub_op):
+            return None
+
+        # Find all base_signals operations in context
+        base_signals_ops = [op for op in context.sub_operations if self._is_base_signals_operation(op)]
+
+        # Group by temporal proximity
+        clusters = self._group_by_temporal_proximity(base_signals_ops)
+
+        # Find cluster containing current operation
+        for i, cluster in enumerate(clusters):
+            if sub_op in cluster:
+                # Generate stable meta_id based on first operation in cluster
+                first_op = min(cluster, key=lambda op: op.start_time)
+                meta_id = f"base_signals_burst_{int(first_op.start_time * 1000)}_{i}"
+                return meta_id
+
+        return None
+
+    def _is_base_signals_operation(self, sub_op: SubOperationLog) -> bool:
+        """
+        Check if operation is a base_signals operation.
+
+        Criteria based on architectural analysis:
+        - Origin: base_signals.py:51 (handle_request_cycle dispatcher)
+        - Atomic: no sub-operations
+        - Fast: duration <= max_duration_ms
+        """
+        if not hasattr(sub_op, "caller_info") or not sub_op.caller_info:
+            return False
+
+        return (
+            sub_op.caller_info.filename == "base_signals.py"
+            and sub_op.caller_info.line_number == 51
+            and len(sub_op.sub_operations) == 0  # Atomic operations
+            and sub_op.duration_ms <= self.config.get("max_duration_ms", 10.0)
+        )
+
+    def _group_by_temporal_proximity(self, operations: List[SubOperationLog]) -> List[List[SubOperationLog]]:
+        """
+        Group operations by temporal proximity with gap analysis.
+
+        Args:
+            operations: List of base_signals operations to group
+
+        Returns:
+            List of clusters, each containing temporally close operations
+        """
+        if not operations:
+            return []
+
+        # Sort by start time for temporal analysis
+        operations.sort(key=lambda op: op.start_time)
+
+        window_sec = self.config["time_window_ms"] / 1000.0  # Convert to seconds
+        max_gap_sec = self.config.get("max_gap_ms", 50) / 1000.0  # Default 50ms
+        min_burst_size = self.config["min_burst_size"]
+
+        clusters = []
+        current_cluster = []
+
+        for op in operations:
+            if not current_cluster:
+                # Start first cluster
+                current_cluster = [op]
+            else:
+                last_op = current_cluster[-1]
+                gap = op.start_time - last_op.start_time
+
+                # Check if operation fits in current cluster
+                if gap <= window_sec and gap <= max_gap_sec:
+                    current_cluster.append(op)
+                else:
+                    # Gap too large - finalize current cluster if it's big enough
+                    if len(current_cluster) >= min_burst_size:
+                        clusters.append(current_cluster)
+
+                    # Start new cluster
+                    current_cluster = [op]
+
+        # Add final cluster if it meets size requirements
+        if len(current_cluster) >= min_burst_size:
+            clusters.append(current_cluster)
+
+        return clusters
+
+    def get_meta_operation_description(self, meta_id: str, operations: List[SubOperationLog]) -> str:
+        """Generate description for BaseSignals burst cluster."""
+        if not operations:
+            return "BaseSignals burst: 0 operations"
+
+        # Calculate temporal characteristics
+        start_time = min(op.start_time for op in operations)
+        end_time = max(op.start_time + (op.execution_time or 0) for op in operations)
+        total_duration = (end_time - start_time) * 1000  # Convert to milliseconds
+
+        # Analyze targets
+        targets = {op.target for op in operations if op.target}
+        if len(targets) > 1:
+            target_info = f"{len(targets)} targets"
+        elif targets:
+            target_info = f"target: {list(targets)[0]}"
+        else:
+            target_info = "mixed targets"
+
+        # Analyze operation types
+        op_types = {op.operation_name for op in operations if op.operation_name}
+        if len(op_types) > 1:
+            type_info = f"{len(op_types)} types"
+        elif op_types:
+            type_info = f"type: {list(op_types)[0]}"
+        else:
+            type_info = "mixed types"
+
+        return f"BaseSignals burst ({target_info}, {type_info}): " f"{len(operations)} ops, {total_duration:.1f}ms"
+
+
 class TimeWindowStrategy(MetaOperationStrategy):
     """
     Groups operations that occur within a specified time window.
@@ -135,7 +305,9 @@ class TargetClusterStrategy(MetaOperationStrategy):
 
         if max_gap is None and not strict_sequence:
             # Simple clustering - all operations with same target
-            return f"target_{sub_op.target}"  # Advanced clustering with gap analysis
+            return f"target_{sub_op.target}"
+
+        # Advanced clustering with gap analysis
         return self._detect_with_gap_analysis(sub_op, context, same_target_ops)
 
     def _detect_with_gap_analysis(
@@ -151,6 +323,7 @@ class TargetClusterStrategy(MetaOperationStrategy):
 
         # Find sequences of same-target operations within gap tolerance
         clusters = self._find_target_clusters(sorted_ops, sub_op.target, max_gap, strict_sequence)
+
         # Find which cluster contains our operation
         for cluster_id, cluster_ops in clusters.items():
             if len(cluster_ops) >= min_cluster_size and sub_op in cluster_ops:
@@ -205,7 +378,9 @@ class TargetClusterStrategy(MetaOperationStrategy):
                     current_cluster = [op]
                 else:
                     # Add to current cluster
-                    current_cluster.append(op)  # Add final cluster
+                    current_cluster.append(op)
+
+        # Add final cluster
         if current_cluster:
             clusters[current_cluster_id] = current_cluster
 

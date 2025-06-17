@@ -8,7 +8,7 @@
 ```python
 def is_base_signals_operation(sub_op: SubOperationLog) -> bool:
     """Критерии идентификации base_signals операций."""
-    return (
+    return (****
         sub_op.caller_info.filename == "base_signals.py" and
         sub_op.caller_info.line_number == 51 and
         len(sub_op.sub_operations) == 0 and  # Атомарность
@@ -196,8 +196,8 @@ def _group_by_temporal_proximity(self, operations: List[SubOperationLog]) -> Lis
 ```python
 BASE_SIGNALS_BURST_CONFIG = {
     "enabled": True,
-    "priority": 1,              # Наивысший приоритет среди стратегий
-    "time_window_ms": 100,      # Временное окно группировки
+    "priority": 1,              # Наивысший приоритет среди стратегий**
+    "time_window_ms": 100,      # Временное окно группировки**
     "min_burst_size": 2,        # Минимальное количество операций в бурсте
     "max_gap_ms": 50,          # Максимальный разрыв между операциями
     "max_duration_ms": 10.0,    # Максимальная длительность одной операции
