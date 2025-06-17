@@ -14,7 +14,7 @@ Key components:
 
 import time
 from datetime import datetime
-from typing import Dict, List, Optional
+from typing import Any, Dict, List, Optional
 
 from tabulate import tabulate
 
@@ -357,7 +357,7 @@ class OperationTableFormatter:
 
     def _format_meta_operations_summary(self, meta_operations) -> str:
         """
-        Format meta-operations summary for display.
+        Format meta-operations summary for display with specialized formatters.
 
         Args:
             meta_operations: List of MetaOperation objects
@@ -370,30 +370,39 @@ class OperationTableFormatter:
 
         lines = ["META-OPERATIONS DETECTED:"]
 
-        for i, meta_op in enumerate(meta_operations, 1):  # Basic info line
-            duration_ms = meta_op.duration_ms or 0
+        for i, meta_op in enumerate(meta_operations, 1):
+            # Use specialized formatter if available
+            formatter = self._get_meta_operation_formatter(meta_op)
 
-            success_rate = (
-                (meta_op.successful_operations_count / meta_op.operations_count * 100)
-                if meta_op.operations_count > 0
-                else 0
-            )
+            if formatter == self._format_base_signals_burst_meta_operation:
+                # Use BaseSignalsMetaBurst formatter
+                specialized_lines = formatter(meta_op)
+                lines.extend(specialized_lines)
+            else:
+                # Use generic formatting
+                duration_ms = meta_op.duration_ms or 0
 
-            summary_line = (
-                f"  {i}. {meta_op.name} ({meta_op.strategy_name}): "
-                f"{meta_op.operations_count} ops, {duration_ms:.1f}ms, "
-                f"{success_rate:.0f}% success"
-            )
-            lines.append(summary_line)
+                success_rate = (
+                    (meta_op.successful_operations_count / meta_op.operations_count * 100)
+                    if meta_op.operations_count > 0
+                    else 0
+                )
 
-            # Operation details (compact)
-            if meta_op.sub_operations:
-                step_numbers = [str(op.step_number) for op in meta_op.sub_operations]
-                if len(step_numbers) <= 5:
-                    steps_text = ", ".join(step_numbers)
-                else:
-                    steps_text = f"{', '.join(step_numbers[:3])}, ... {len(step_numbers)-3} more"
-                lines.append(f"     Steps: {steps_text}")
+                summary_line = (
+                    f"  {i}. {meta_op.name} ({meta_op.strategy_name}): "
+                    f"{meta_op.operations_count} ops, {duration_ms:.1f}ms, "
+                    f"{success_rate:.0f}% success"
+                )
+                lines.append(summary_line)
+
+                # Operation details (compact)
+                if meta_op.sub_operations:
+                    step_numbers = [str(op.step_number) for op in meta_op.sub_operations]
+                    if len(step_numbers) <= 5:
+                        steps_text = ", ".join(step_numbers)
+                    else:
+                        steps_text = f"{', '.join(step_numbers[:3])}, ... {len(step_numbers)-3} more"
+                    lines.append(f"     Steps: {steps_text}")
 
         return "\n".join(lines)
 
@@ -796,6 +805,75 @@ class OperationTableFormatter:
             # Fallback to simple format
             return self._format_simple_table(table_data, headers)
 
+    def _get_meta_operation_formatter(self, meta_operation: "MetaOperation") -> callable:
+        """
+        Return appropriate formatter for meta-operation.
+
+        Args:
+            meta_operation: Meta-operation to format
+
+        Returns:
+            callable: Formatting method
+        """
+        if meta_operation.meta_id.startswith("base_signals_burst_"):
+            return self._format_base_signals_burst_meta_operation
+        elif meta_operation.meta_id.startswith("time_window_"):
+            return self._format_time_window_meta_operation
+        else:
+            return self._format_generic_meta_operation
+
+    def _format_base_signals_burst_meta_operation(self, meta_operation: "MetaOperation") -> List[str]:
+        """
+        Specialized formatting for BaseSignalsMetaBurst.
+
+        Args:
+            meta_operation: Meta-operation of BaseSignalsMetaBurst type
+
+        Returns:
+            List[str]: Formatted lines
+        """
+        # Check that this is actually BaseSignalsMetaBurst
+        if not meta_operation.meta_id.startswith("base_signals_burst_"):
+            return self._format_generic_meta_operation(meta_operation)
+
+        # Get configuration for BaseSignalsMetaBurst
+        config = self.config.base_signals_burst if hasattr(self.config, "base_signals_burst") else {}
+
+        # Create specialized formatter
+        burst_formatter = BaseSignalsBurstFormatter(config)
+
+        # Format cluster
+        return burst_formatter.format_cluster(meta_operation, self)
+
+    def _format_time_window_meta_operation(self, meta_operation: "MetaOperation") -> List[str]:
+        """Format time window meta-operation (placeholder for existing logic)."""
+        # This can be extended later for specific time window formatting
+        return self._format_generic_meta_operation(meta_operation)
+
+    def _format_generic_meta_operation(self, meta_operation: "MetaOperation") -> List[str]:
+        """
+        Generic formatting for meta-operations.
+
+        Args:
+            meta_operation: Meta-operation to format
+
+        Returns:
+            List[str]: Formatted lines
+        """
+        lines = []
+
+        # Basic meta-operation info
+        description = meta_operation.description or meta_operation.strategy_name
+        lines.append(f"► {description} ({len(meta_operation.sub_operations)} operations)")
+
+        # Show operations if not too many
+        if len(meta_operation.sub_operations) <= 10:
+            for i, sub_op in enumerate(meta_operation.sub_operations, 1):
+                op_line = f"  {i}. {sub_op.operation_name} → {sub_op.target} ({sub_op.status})"
+                lines.append(op_line)
+
+        return lines
+
 
 # Global formatter instance for use across the module
 default_formatter = OperationTableFormatter()
@@ -812,3 +890,240 @@ def format_operation_log(operation_log: OperationLog) -> str:
         str: Formatted operation log as a string
     """
     return default_formatter.format_operation_log(operation_log)
+
+
+class BaseSignalsBurstFormatter:
+    """
+    Specialized formatter for displaying BaseSignalsMetaBurst clusters.
+
+    This formatter provides enhanced display capabilities for BaseSignals operation
+    clusters with proper noise operation marking and detailed summary information.
+    """
+
+    def __init__(self, config: Dict[str, Any]):
+        """
+        Initialize the BaseSignalsBurst formatter.
+
+        Args:
+            config: Configuration dictionary for BaseSignalsMetaBurst formatting
+        """
+        self.config = config
+        self.noise_marker = config.get("noise_marker", "[*]")
+        self.show_noise_markers = config.get("show_noise_markers", True)
+
+    def format_cluster(self, meta_operation: "MetaOperation", table_formatter: "OperationTableFormatter") -> List[str]:
+        """
+        Format BaseSignalsMetaBurst cluster for output.
+
+        Args:
+            meta_operation: Meta-operation to format
+            table_formatter: Main table formatter instance
+
+        Returns:
+            List[str]: Formatted cluster lines
+        """
+        lines = []
+
+        # Cluster header
+        header = self._format_cluster_header(meta_operation)
+        lines.append(header)
+
+        # Detailed operations (if not collapsed)
+        if not self._is_collapsed(meta_operation):
+            detail_lines = self._format_cluster_details(meta_operation, table_formatter)
+            lines.extend(detail_lines)
+
+        # Cluster summary
+        if self.config.get("show_detailed_summary", True):
+            summary = self._format_cluster_summary(meta_operation)
+            lines.append(summary)
+
+        return lines
+
+    def _format_cluster_header(self, meta_operation: "MetaOperation") -> str:
+        """Format cluster header with visual markers."""
+        # Use description from strategy
+        description = meta_operation.description or "BaseSignalsBurst"
+
+        # Add visual markers
+        cluster_id = meta_operation.meta_id.split("_")[-1]  # Last part of ID
+        header = f"⚡ [{cluster_id}] {description}"
+
+        return header
+
+    def _format_cluster_details(
+        self, meta_operation: "MetaOperation", table_formatter: "OperationTableFormatter"
+    ) -> List[str]:
+        """Format detailed list of cluster operations."""
+        lines = []
+
+        # Sort operations by time/step
+        sorted_operations = sorted(meta_operation.sub_operations, key=lambda x: x.step_number)
+
+        for i, sub_op in enumerate(sorted_operations, 1):
+            # Determine if operation is noise
+            is_noise = not self._is_base_signals_operation(sub_op)
+
+            # Format operation line
+            op_line = self._format_sub_operation(sub_op, i, is_noise, table_formatter)
+            lines.append(op_line)
+
+        return lines
+
+    def _format_sub_operation(
+        self, sub_op: "SubOperationLog", index: int, is_noise: bool, table_formatter: "OperationTableFormatter"
+    ) -> str:
+        """Format individual sub-operation with noise markers."""
+        # Get basic formatting through main formatter
+        basic_data = {
+            "step": sub_op.step_number,
+            "operation": str(sub_op.operation_name)[:20] + "..."
+            if len(str(sub_op.operation_name)) > 20
+            else str(sub_op.operation_name),
+            "target": str(sub_op.target),
+            "data_type": sub_op.result_data_type,
+            "status": sub_op.status,
+            "duration": f"{sub_op.duration_ms:.3f}" if sub_op.duration_ms else "0.000",
+        }  # Format as basic table row
+        base_format = (
+            f"{basic_data['operation']:<20} | {basic_data['target']:<10} | "
+            f"{basic_data['data_type']:<15} | {basic_data['status']:<8} | {basic_data['duration']:>8}s"
+        )
+
+        # Add indentation and markers
+        indent = "    "  # Indentation for sub-operations
+
+        if is_noise and self.show_noise_markers:
+            # Add noise marker
+            noise_marker = f"{self.noise_marker} "
+            formatted_line = f"{indent}{index:2d}. {noise_marker}{base_format}"
+        else:
+            formatted_line = f"{indent}{index:2d}. {base_format}"
+
+        return formatted_line
+
+    def _format_cluster_summary(self, meta_operation: "MetaOperation") -> str:
+        """Format cluster summary with statistics."""
+        operations = meta_operation.sub_operations
+
+        # Calculate statistics
+        total_ops = len(operations)
+        base_signals_ops = sum(1 for op in operations if self._is_base_signals_operation(op))
+        noise_ops = total_ops - base_signals_ops
+
+        # Calculate timing
+        if operations:
+            start_times = [op.start_time for op in operations if op.start_time]
+            end_times = [op.end_time or op.start_time for op in operations if op.start_time]
+            if start_times and end_times:
+                start_time = min(start_times)
+                end_time = max(end_times)
+                duration_ms = int((end_time - start_time) * 1000) if start_time and end_time else 0
+            else:
+                duration_ms = 0
+        else:
+            duration_ms = 0
+
+        # Form summary
+        summary_parts = [
+            f"Итого: {total_ops} операций",
+            f"base_signals: {base_signals_ops}",
+        ]
+
+        if noise_ops > 0:
+            summary_parts.append(f"шум: {noise_ops}")
+
+        summary_parts.append(f"время: {duration_ms} мс")
+
+        summary = f"    └─ {', '.join(summary_parts)}"
+        return summary
+
+    def _is_base_signals_operation(self, sub_op: "SubOperationLog") -> bool:
+        """Check if operation is a base_signals operation."""
+        # Use same logic as in strategy
+        return (
+            sub_op.target == "base_signals"
+            or "base_signals" in str(sub_op.target).lower()
+            or "signal" in sub_op.operation_name.lower()
+            if sub_op.operation_name
+            else False
+        )
+
+    def _is_collapsed(self, meta_operation: "MetaOperation") -> bool:
+        """Determine if cluster should be collapsed."""
+        return self.config.get("collapsed_by_default", True)
+
+    def format_compact_base_signals_burst(self, meta_operation: "MetaOperation") -> str:
+        """Compact display of BaseSignalsMetaBurst."""
+        description = meta_operation.description or "BaseSignalsBurst"
+        op_count = len(meta_operation.sub_operations)
+
+        return f"⚡ {description} ({op_count} ops)"
+
+    def format_json_base_signals_burst(self, meta_operation: "MetaOperation") -> Dict[str, Any]:
+        """JSON representation of BaseSignalsMetaBurst."""
+        operations = meta_operation.sub_operations
+
+        return {
+            "type": "BaseSignalsMetaBurst",
+            "meta_id": meta_operation.meta_id,
+            "description": meta_operation.description,
+            "statistics": {
+                "total_operations": len(operations),
+                "base_signals_operations": sum(1 for op in operations if self._is_base_signals_operation(op)),
+                "noise_operations": sum(1 for op in operations if not self._is_base_signals_operation(op)),
+                "duration_ms": self._calculate_duration_ms(operations),
+            },
+            "operations": [self._operation_to_dict(op) for op in operations],
+        }
+
+    def _calculate_duration_ms(self, operations: List["SubOperationLog"]) -> int:
+        """Calculate total duration in milliseconds."""
+        if not operations:
+            return 0
+
+        start_times = [op.start_time for op in operations if op.start_time]
+        end_times = [op.end_time or op.start_time for op in operations if op.start_time]
+
+        if start_times and end_times:
+            start_time = min(start_times)
+            end_time = max(end_times)
+            return int((end_time - start_time) * 1000) if start_time and end_time else 0
+        return 0
+
+    def _operation_to_dict(self, sub_op: "SubOperationLog") -> Dict[str, Any]:
+        """Convert SubOperationLog to dictionary."""
+        return {
+            "step_number": sub_op.step_number,
+            "operation_name": sub_op.operation_name,
+            "target": sub_op.target,
+            "result_data_type": sub_op.result_data_type,
+            "status": sub_op.status,
+            "duration_ms": sub_op.duration_ms,
+            "is_base_signals": self._is_base_signals_operation(sub_op),
+        }
+
+    def apply_noise_styling(self, operation_text: str, is_noise: bool) -> str:
+        """
+        Apply styling for noise operations.
+
+        Args:
+            operation_text: Original operation text
+            is_noise: Whether operation is noise
+
+        Returns:
+            str: Styled text
+        """
+        if not is_noise or not self.config.get("show_noise_markers", True):
+            return operation_text
+
+        marker_style = self.config.get("noise_marker_style", "asterisk")
+        from .formatter_config import NOISE_MARKER_STYLES
+
+        marker = NOISE_MARKER_STYLES.get(marker_style, "[*]")
+
+        # Additional styling (color, italic) if supported by terminal
+        if self.config.get("use_color", False):
+            return f"\033[90m{marker}\033[0m {operation_text}"  # Gray color
+        else:
+            return f"{marker} {operation_text}"
