@@ -26,9 +26,15 @@ class MetaOperation:
     strategy_name: str = "unknown"  # Name of the clustering strategy used
     description: str = ""  # Human-readable description of the meta-operation
     sub_operations: List[SubOperationLog] = field(default_factory=list)
-    start_time: Optional[float] = None  # Start timestamp    end_time: Optional[float] = None  # End timestamp
+    start_time: Optional[float] = None  # Start timestamp
+    end_time: Optional[float] = None  # End timestamp
     cluster_type: str = "unknown"  # Type of clustering used (temporal, semantic, etc.)
     cluster_parameters: dict = field(default_factory=dict)  # Parameters used for clustering
+    # Специфические атрибуты для BaseSignalsBurst (Stage 3 implementation)
+    real_actor: Optional[str] = None  # Реальный инициатор (main_window.py:446)
+    burst_type: Optional[str] = None  # Тип бурста (Parameter_Update, Add_Reaction, etc.)
+    target_distribution: Optional[dict] = None  # Распределение по targets
+    temporal_characteristics: Optional[dict] = None  # Временные метрики
 
     @property
     def name(self) -> str:
@@ -120,9 +126,7 @@ class MetaOperation:
 
         # Fallback: calculate from sub-operations
         if not self.sub_operations:
-            return None
-
-        # Sum execution times of sub-operations
+            return None  # Sum execution times of sub-operations
         total = 0.0
         for op in self.sub_operations:
             if hasattr(op, "execution_time") and op.execution_time is not None:
@@ -137,4 +141,81 @@ class MetaOperation:
     def __repr__(self) -> str:
         """Return a detailed representation without response_data_raw."""
         sub_ops_summary = f"{len(self.sub_operations)} operations" if self.sub_operations else "no operations"
-        return f"MetaOperation(meta_id='{self.meta_id}', strategy='{self.strategy_name}', {sub_ops_summary})"
+        return f"MetaOperation(meta_id='{self.meta_id}', " f"strategy='{self.strategy_name}', {sub_ops_summary})"
+
+    # Stage 3: BaseSignals Burst Analysis Methods
+
+    def is_base_signals_burst(self) -> bool:
+        """Check if this meta-operation is a BaseSignals burst."""
+        return self.strategy_name == "BaseSignalsBurst"
+
+    def get_burst_performance_summary(self) -> str:
+        """Get performance summary for BaseSignals bursts."""
+        if not self.is_base_signals_burst() or not self.temporal_characteristics:
+            return "N/A"
+
+        ops_per_sec = self.temporal_characteristics.get("operations_per_second", 0)
+        total_duration = self.temporal_characteristics.get("total_duration_ms", 0)
+
+        if ops_per_sec > 100:
+            return f"{ops_per_sec:.0f} ops/s, {total_duration:.1f}ms"
+        else:
+            return f"{total_duration:.1f}ms"
+
+    def get_target_distribution_summary(self) -> str:
+        """Get summary of target distribution for BaseSignals bursts."""
+        if not self.target_distribution:
+            return "unknown targets"
+
+        if len(self.target_distribution) == 1:
+            target = next(iter(self.target_distribution.keys()))
+            count = self.target_distribution[target]
+            return f"{target}({count})"
+        else:
+            targets_info = ", ".join([f"{target}({count})" for target, count in self.target_distribution.items()])
+            return f"{len(self.target_distribution)} targets [{targets_info}]"
+
+    def get_burst_type_description(self) -> str:
+        """Get human-readable burst type description."""
+        if not self.burst_type:
+            return "Generic Signal Burst"
+
+        burst_descriptions = {
+            "Parameter_Update_Burst": "Parameter Update",
+            "Add_Reaction_Burst": "Add Reaction",
+            "Highlight_Reaction_Burst": "Highlight Reaction",
+            "Multi_Target_Burst": "Multi-target Operation",
+            "Generic_Signal_Burst": "Generic Signal",
+        }
+
+        return burst_descriptions.get(self.burst_type, self.burst_type.replace("_", " "))
+
+    def get_enhanced_summary(self) -> str:
+        """Get enhanced summary for BaseSignals bursts with all Stage 3 features."""
+        if not self.is_base_signals_burst():
+            return self.get_summary()
+
+        burst_desc = self.get_burst_type_description()
+        op_count = len(self.sub_operations)
+        duration = self.temporal_characteristics.get("total_duration_ms", 0) if self.temporal_characteristics else 0
+
+        base_summary = f"{burst_desc}: {op_count} operations in {duration:.1f}ms"
+
+        # Add target information if multi-target
+        if self.target_distribution and len(self.target_distribution) > 1:
+            target_summary = self.get_target_distribution_summary()
+            base_summary += f" across {target_summary}"
+
+        # Add performance info for high-performance bursts
+        perf_summary = self.get_burst_performance_summary()
+        if "ops/s" in perf_summary:
+            ops_per_sec = self.temporal_characteristics.get("operations_per_second", 0)
+            base_summary += f" ({ops_per_sec:.0f} ops/s)"
+
+        return base_summary
+
+    def get_real_actor_info(self) -> str:
+        """Get information about the real actor that initiated this burst."""
+        if self.real_actor:
+            return f"initiated by {self.real_actor}"
+        return "actor unknown"

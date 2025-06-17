@@ -3,10 +3,22 @@ Detection strategies for meta-operation clustering.
 
 This module implements various strategies for detecting groups of related
 sub-operations that can be clustered into meta-operations.
+
+Stage 3 enhancements: Enhanced BaseSignalsBurstStrategy with complete
+meta-operation structure implementation including context-aware actor
+resolution and enhanced analytics.
 """
 
 from typing import Dict, List, Optional
 
+from .base_signals_utils import (
+    calculate_target_distribution,
+    calculate_temporal_characteristics,
+    determine_burst_type,
+    generate_burst_summary,
+    generate_stable_meta_id,
+    is_base_signals_operation,
+)
 from .meta_operation_detector import MetaOperationStrategy
 from .operation_log import OperationLog
 from .sub_operation_log import SubOperationLog
@@ -66,9 +78,7 @@ class BaseSignalsBurstStrategy(MetaOperationStrategy):
         """
         # Filter: only base_signals operations
         if not self._is_base_signals_operation(sub_op):
-            return None
-
-        # Find all base_signals operations in context
+            return None  # Find all base_signals operations in context
         base_signals_ops = [op for op in context.sub_operations if self._is_base_signals_operation(op)]
 
         # Group by temporal proximity
@@ -77,9 +87,8 @@ class BaseSignalsBurstStrategy(MetaOperationStrategy):
         # Find cluster containing current operation
         for i, cluster in enumerate(clusters):
             if sub_op in cluster:
-                # Generate stable meta_id based on first operation in cluster
-                first_op = min(cluster, key=lambda op: op.start_time)
-                meta_id = f"base_signals_burst_{int(first_op.start_time * 1000)}_{i}"
+                # Generate stable meta_id using utility function
+                meta_id = generate_stable_meta_id(cluster, i)
                 return meta_id
 
         return None
@@ -93,15 +102,8 @@ class BaseSignalsBurstStrategy(MetaOperationStrategy):
         - Atomic: no sub-operations
         - Fast: duration <= max_duration_ms
         """
-        if not hasattr(sub_op, "caller_info") or not sub_op.caller_info:
-            return False
-
-        return (
-            sub_op.caller_info.filename == "base_signals.py"
-            and sub_op.caller_info.line_number == 51
-            and len(sub_op.sub_operations) == 0  # Atomic operations
-            and sub_op.duration_ms <= self.config.get("max_duration_ms", 10.0)
-        )
+        max_duration_ms = self.config.get("max_duration_ms", 10.0)
+        return is_base_signals_operation(sub_op, max_duration_ms)
 
     def _group_by_temporal_proximity(self, operations: List[SubOperationLog]) -> List[List[SubOperationLog]]:
         """
@@ -143,43 +145,29 @@ class BaseSignalsBurstStrategy(MetaOperationStrategy):
                         clusters.append(current_cluster)
 
                     # Start new cluster
-                    current_cluster = [op]
-
-        # Add final cluster if it meets size requirements
+                    current_cluster = [op]  # Add final cluster if it meets size requirements
         if len(current_cluster) >= min_burst_size:
             clusters.append(current_cluster)
 
         return clusters
 
     def get_meta_operation_description(self, meta_id: str, operations: List[SubOperationLog]) -> str:
-        """Generate description for BaseSignals burst cluster."""
+        """
+        Generate enhanced description for BaseSignals burst cluster.
+
+        Stage 3 implementation: Uses utility functions for comprehensive analysis
+        including burst type detection, temporal characteristics, and target distribution.
+        """
         if not operations:
             return "BaseSignals burst: 0 operations"
 
-        # Calculate temporal characteristics
-        start_time = min(op.start_time for op in operations)
-        end_time = max(op.start_time + (op.execution_time or 0) for op in operations)
-        total_duration = (end_time - start_time) * 1000  # Convert to milliseconds
+        # Stage 3: Use utility functions for enhanced analysis
+        burst_type = determine_burst_type(operations)
+        temporal_chars = calculate_temporal_characteristics(operations)
+        target_dist = calculate_target_distribution(operations)
 
-        # Analyze targets
-        targets = {op.target for op in operations if op.target}
-        if len(targets) > 1:
-            target_info = f"{len(targets)} targets"
-        elif targets:
-            target_info = f"target: {list(targets)[0]}"
-        else:
-            target_info = "mixed targets"
-
-        # Analyze operation types
-        op_types = {op.operation_name for op in operations if op.operation_name}
-        if len(op_types) > 1:
-            type_info = f"{len(op_types)} types"
-        elif op_types:
-            type_info = f"type: {list(op_types)[0]}"
-        else:
-            type_info = "mixed types"
-
-        return f"BaseSignals burst ({target_info}, {type_info}): " f"{len(operations)} ops, {total_duration:.1f}ms"
+        # Generate comprehensive summary
+        return generate_burst_summary(operations, burst_type, temporal_chars, target_dist)
 
 
 class TimeWindowStrategy(MetaOperationStrategy):

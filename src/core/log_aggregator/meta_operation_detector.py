@@ -1,18 +1,23 @@
 """
 Meta-operation detection strategies and interfaces.
 
-This module defines the abstract interfaces         Implements the detailed logic from stage_04_detector_logic.md:
-        1. Check preconditions
-        2. Analyze operations with strategies
-        3. Assign operations to meta-groups
-        4. Post-process and finalize meta-operationseta-operation detection
+This module defines the abstract interfaces for meta-operation detection
 strategies and the main detector class that coordinates multiple strategies.
+
+Stage 3 enhancements: Enhanced MetaOperation creation with BaseSignals-specific
+attributes including real actor resolution and comprehensive analytics.
 """
 
 import logging
 from abc import ABC, abstractmethod
 from typing import Any, Dict, List, Optional
 
+from .base_signals_utils import (
+    calculate_target_distribution,
+    calculate_temporal_characteristics,
+    determine_burst_type,
+    extract_real_actor,
+)
 from .meta_operation import MetaOperation
 from .operation_log import OperationLog
 from .sub_operation_log import SubOperationLog
@@ -145,9 +150,7 @@ class MetaOperationDetector:
         for sub_op in operation_log.sub_operations:
             # Check if operation was already assigned
             if sub_op.step_number in operation_assignments:
-                continue
-
-            # Apply strategies in priority order
+                continue  # Apply strategies in priority order
             for strategy in self.strategies:
                 try:
                     meta_id = strategy.detect(sub_op, operation_log)
@@ -184,6 +187,7 @@ class MetaOperationDetector:
         """
         # Create new meta-operation if needed
         if meta_id not in meta_operations_dict:
+            # Create basic meta-operation
             meta_operations_dict[meta_id] = MetaOperation(
                 meta_id=meta_id,
                 strategy_name=strategy.strategy_name,
@@ -205,7 +209,7 @@ class MetaOperationDetector:
         self, operation_log: OperationLog, meta_operations_dict: Dict[str, MetaOperation]
     ) -> None:
         """
-        Finalize detected meta-operations.
+        Finalize detected meta-operations with Stage 3 enhancements.
 
         Args:
             operation_log: The operation log to update
@@ -216,8 +220,13 @@ class MetaOperationDetector:
         min_group_size = self.config.get("min_group_size", 2)
 
         for meta_op in meta_operations_dict.values():
-            if len(meta_op.sub_operations) >= min_group_size:  # Sort operations by step_number
+            if len(meta_op.sub_operations) >= min_group_size:
+                # Sort operations by step_number
                 meta_op.sub_operations.sort(key=lambda op: op.step_number)
+
+                # Stage 3: Enhance BaseSignals meta-operations with additional attributes
+                if meta_op.strategy_name == "BaseSignalsBurst":
+                    self._enhance_base_signals_meta_operation(meta_op, operation_log)
 
                 # Update description with final data
                 meta_op.description = self._generate_final_description(meta_op)
@@ -240,17 +249,54 @@ class MetaOperationDetector:
         if self.config.get("debug_mode", False):
             self._log_detection_statistics(operation_log, meta_operations_dict)
 
+    def _enhance_base_signals_meta_operation(self, meta_op: MetaOperation, context: OperationLog) -> None:
+        """
+        Enhance BaseSignals meta-operation with Stage 3 attributes.
+
+        Args:
+            meta_op: The BaseSignals meta-operation to enhance
+            context: The operation context for real actor extraction
+        """
+        if not meta_op.sub_operations:
+            return
+
+        # Extract real actor from context
+        meta_op.real_actor = extract_real_actor(context)
+
+        # Determine burst type
+        meta_op.burst_type = determine_burst_type(meta_op.sub_operations)
+
+        # Calculate temporal characteristics
+        meta_op.temporal_characteristics = calculate_temporal_characteristics(meta_op.sub_operations)
+
+        # Calculate target distribution
+        meta_op.target_distribution = calculate_target_distribution(meta_op.sub_operations)
+
+        # Set start and end times from temporal characteristics
+        if meta_op.temporal_characteristics and meta_op.sub_operations:
+            first_op = min(meta_op.sub_operations, key=lambda op: op.start_time)
+            last_op = max(meta_op.sub_operations, key=lambda op: op.start_time + (op.execution_time or 0))
+            meta_op.start_time = first_op.start_time
+            meta_op.end_time = last_op.start_time + (last_op.execution_time or 0)
+
     def _generate_final_description(self, meta_op: MetaOperation) -> str:
         """
         Generate final description for a meta-operation.
 
         Args:
-            meta_op: The meta-operation to describe        Returns:
+            meta_op: The meta-operation to describe
+
+        Returns:
             str: Final description
         """
         if not meta_op.sub_operations:
             return f"Meta-operation: {meta_op.meta_id}"
 
+        # Stage 3: Use enhanced summary for BaseSignals meta-operations
+        if meta_op.is_base_signals_burst():
+            return meta_op.get_enhanced_summary()
+
+        # Fallback to standard description for other types
         op_count = len(meta_op.sub_operations)
         strategy = meta_op.strategy_name
         duration = meta_op.duration_ms

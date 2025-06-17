@@ -221,9 +221,7 @@ class TestMetaOperationIntegration:
 
             with patch.object(AggregatedOperationLogger, "_setup_aggregated_logger"):
                 logger = AggregatedOperationLogger()
-                logger._aggregated_logger = Mock()
-
-                # Log multiple operations
+                logger._aggregated_logger = Mock()  # Log multiple operations
                 operations = [
                     self.create_test_operation_log("OPERATION_1"),
                     self.create_test_operation_log("OPERATION_2"),
@@ -231,10 +229,12 @@ class TestMetaOperationIntegration:
                 ]
 
                 for op in operations:
-                    logger.log_operation(op)  # Verify all operations were processed
+                    logger.log_operation(op)
+
+                # Verify all operations were processed
                 assert mock_detector.detect_meta_operations.call_count == 3
-                # At least 2 calls per operation (separator + content)
-                assert logger._aggregated_logger.info.call_count >= 6
+                # In minimalist mode (show_decorative_borders=False), each operation only logs once
+                assert logger._aggregated_logger.info.call_count == 3
 
 
 class TestMetaOperationErrorHandling:
