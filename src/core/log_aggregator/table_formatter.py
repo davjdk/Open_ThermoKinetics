@@ -18,6 +18,7 @@ from typing import Dict, List, Optional
 
 from tabulate import tabulate
 
+from .base_signals_formatter import BaseSignalsBurstFormatter
 from .formatter_config import FormatterConfig
 from .meta_operation import MetaOperation
 from .operation_log import OperationLog
@@ -100,6 +101,9 @@ class OperationTableFormatter:
         self.include_error_details = self.config.include_error_details
         self.max_error_context_items = self.config.max_error_context_items
         self._operation_counter = 0  # Simple counter for unique operation IDs
+
+        # Initialize BaseSignals formatter for specialized formatting
+        self.base_signals_formatter = BaseSignalsBurstFormatter(self._formatting_config.get("base_signals_burst", {}))
 
     def format_operation_log(self, operation_log: OperationLog) -> str:  # noqa: C901
         """
@@ -355,62 +359,18 @@ class OperationTableFormatter:
 
         return f"ERROR: {truncated_error}"
 
-    def _format_meta_operations_summary(self, meta_operations) -> str:
-        """
-        Format meta-operations summary for display.
-
-        Args:
-            meta_operations: List of MetaOperation objects
-
-        Returns:
-            str: Formatted meta-operations summary
-        """
-        if not meta_operations:
-            return ""
-
-        lines = ["META-OPERATIONS DETECTED:"]
-
-        for i, meta_op in enumerate(meta_operations, 1):  # Basic info line
-            duration_ms = meta_op.duration_ms or 0
-
-            success_rate = (
-                (meta_op.successful_operations_count / meta_op.operations_count * 100)
-                if meta_op.operations_count > 0
-                else 0
-            )
-
-            summary_line = (
-                f"  {i}. {meta_op.name} ({meta_op.strategy_name}): "
-                f"{meta_op.operations_count} ops, {duration_ms:.1f}ms, "
-                f"{success_rate:.0f}% success"
-            )
-            lines.append(summary_line)
-
-            # Operation details (compact)
-            if meta_op.sub_operations:
-                step_numbers = [str(op.step_number) for op in meta_op.sub_operations]
-                if len(step_numbers) <= 5:
-                    steps_text = ", ".join(step_numbers)
-                else:
-                    steps_text = f"{', '.join(step_numbers[:3])}, ... {len(step_numbers)-3} more"
-                lines.append(f"     Steps: {steps_text}")
-
-        return "\n".join(lines)
-
     def _format_error_details_block(self, operation_log: OperationLog) -> str:
         """
         Format detailed error information for sub-operations with errors.
 
         Args:
-            operation_log: The operation log data
-
-        Returns:
+            operation_log: The operation log data        Returns:
             str: Formatted error details block
         """
         error_sub_operations = [
             sub_op
             for sub_op in operation_log.sub_operations
-            if sub_op.status == "Error" and sub_op.has_detailed_error()
+            if sub_op.status == "Error" and hasattr(sub_op, "error_details") and sub_op.error_details
         ]
 
         if not error_sub_operations:
@@ -436,11 +396,12 @@ class OperationTableFormatter:
             sub_operation: SubOperationLog with error details
 
         Returns:
-            str: Formatted error information"""
-        if not sub_operation.has_detailed_error():
+            str: Formatted error information
+        """
+        if not hasattr(sub_operation, "error_details") or not sub_operation.error_details:
             return (
                 f"Step {sub_operation.step_number}: {sub_operation.clean_operation_name} → "
-                f"{sub_operation.target}\n  Error: {sub_operation.get_error_summary()}"
+                f"{sub_operation.target}\n  Error: {getattr(sub_operation, 'error_message', 'Unknown error')}"
             )
 
         error_details = sub_operation.error_details
@@ -449,74 +410,137 @@ class OperationTableFormatter:
         # Header line
         lines.append(f"Step {sub_operation.step_number}: {sub_operation.clean_operation_name} → {sub_operation.target}")
 
-        # Error type and severity
-        lines.append(f"  Error Type: {error_details.error_type.value.upper()}")
-        lines.append(f"  Severity: {error_details.severity.value.upper()}")
-
-        # Error message
-        lines.append(f"  Message: {error_details.error_message}")
-
-        # Context information
-        if error_details.error_context:
-            lines.append("  Context:")
-            context_items = list(error_details.error_context.items())[: self.max_error_context_items]
-            for key, value in context_items:
-                lines.append(f"    - {key}: {value}")
-
-        # Technical details
-        if error_details.technical_details:
-            lines.append(f"  Technical Details: {error_details.technical_details}")
-
-        # Suggested action
-        if error_details.suggested_action:
-            lines.append(f"  Suggested Action: {error_details.suggested_action}")
+        # Error details
+        if isinstance(error_details, dict):
+            for key, value in error_details.items():
+                lines.append(f"  {key}: {value}")
+        else:
+            lines.append(f"  Error: {error_details}")
 
         return "\n".join(lines)
 
-    def _format_simple_table(self, headers: List[str], table_data: List[List]) -> str:
+    def _format_meta_operations_summary(self, meta_operations) -> str:
         """
-        Fallback simple table formatting when tabulate fails.
+        Format meta-operations summary for display with BaseSignals support.
 
         Args:
-            headers: Table column headers
-            table_data: Table row data
+            meta_operations: List of MetaOperation objects
 
         Returns:
-            str: Simple formatted table
+            str: Formatted meta-operations summary
         """
-        lines = []
+        if not meta_operations:
+            return ""
 
-        # Add headers
-        header_line = " | ".join(f"{header:^15}" for header in headers)
-        lines.append(header_line)
-        lines.append("-" * len(header_line))
+        lines = ["META-OPERATIONS DETECTED:"]
 
-        # Add data rows
-        for row in table_data:
-            row_line = " | ".join(f"{str(cell):^15}" for cell in row)
-            lines.append(row_line)
+        for i, meta_op in enumerate(meta_operations, 1):
+            if meta_op.strategy_name == "BaseSignalsBurst":
+                lines.append(self._format_base_signals_meta_summary(i, meta_op))
+            else:
+                lines.append(self._format_generic_meta_summary(i, meta_op))
 
         return "\n".join(lines)
 
-    def _truncate_text(self, text: str, max_length: int) -> str:
-        """
-        Truncate text to maximum length with ellipsis if needed.
+    def _format_base_signals_meta_summary(self, index: int, meta_op: MetaOperation) -> str:
+        """Specialized formatting for BaseSignals burst summary."""
+        # Use the specialized formatter for enhanced display
+        return self.base_signals_formatter.format_with_visual_indicators(meta_op)
 
-        Args:
-            text: Text to truncate
-            max_length: Maximum allowed length
+    def _format_generic_meta_summary(self, index: int, meta_op: MetaOperation) -> str:
+        """Generic formatting for non-BaseSignals meta operations."""
+        duration_ms = meta_op.duration_ms or 0
 
-        Returns:
-            str: Truncated text
-        """
-        if text is None:
-            return "N/A"
+        success_rate = (
+            (meta_op.successful_operations_count / meta_op.operations_count * 100)
+            if meta_op.operations_count > 0
+            else 0
+        )
 
-        text_str = str(text)
-        if len(text_str) <= max_length:
-            return text_str
+        summary_line = (
+            f"  {index}. {meta_op.name} ({meta_op.strategy_name}): "
+            f"{meta_op.operations_count} ops, {duration_ms:.1f}ms, "
+            f"{success_rate:.0f}% success"
+        )  # Operation details (compact)
+        if meta_op.sub_operations:
+            step_numbers = [str(op.step_number) for op in meta_op.sub_operations]
+            if len(step_numbers) <= 5:
+                steps_text = ", ".join(step_numbers)
+            else:
+                steps_text = f"{', '.join(step_numbers[:3])}, ... {len(step_numbers)-3} more"
+            summary_line += f"\n     Steps: {steps_text}"
 
-        return text_str[: max_length - 3] + "..."
+        return summary_line
+
+    def _extract_burst_type(self, meta_op: MetaOperation) -> str:
+        """Extract burst type from meta operation."""
+        if hasattr(meta_op, "description") and meta_op.description:
+            description = meta_op.description
+            if "Parameter_Update_Burst" in description:
+                return "Parameter Update Burst"
+            elif "Add_Reaction_Burst" in description:
+                return "Add Reaction Burst"
+            elif "Highlight_Reaction_Burst" in description:
+                return "Highlight Reaction Burst"
+            elif "Generic_Signal_Burst" in description:
+                return "Generic Signal Burst"
+
+        # Fallback to analyzing operation names
+        if hasattr(meta_op, "operations") and meta_op.operations:
+            operation_names = [op.operation_name for op in meta_op.operations]
+            if any("UPDATE_VALUE" in str(name) for name in operation_names):
+                return "Parameter Update Burst"
+            elif operation_names.count("SET_VALUE") >= 2:
+                return "Add Reaction Burst"
+
+        return "BaseSignals Burst"
+
+    def _extract_real_actor(self, meta_op: MetaOperation) -> str:
+        """Extract real actor from meta operation context."""
+        if hasattr(meta_op, "description") and meta_op.description:
+            # Look for (from actor) pattern in description
+            if "(from " in meta_op.description and ")" in meta_op.description:
+                start = meta_op.description.find("(from ") + 6
+                end = meta_op.description.find(")", start)
+                if end > start:
+                    return meta_op.description[start:end]
+
+        # Look for real actor in operations context
+        if hasattr(meta_op, "operations") and meta_op.operations:
+            for op in meta_op.operations:
+                if hasattr(op, "caller_info") and op.caller_info:
+                    caller = op.caller_info
+                    if isinstance(caller, dict):
+                        filename = caller.get("filename", "")
+                        lineno = caller.get("lineno", 0)
+                        if filename and lineno:
+                            return f"{filename}:{lineno}"
+                    elif isinstance(caller, str) and caller != "base_signals.py:51":
+                        return caller
+
+        return ""
+
+    def _extract_duration_from_summary(self, summary: str) -> str:
+        """Extract duration information from summary string."""
+        if not summary:
+            return ""
+
+        # Look for patterns like "3 мс", "45.0ms", "0.003s"
+        import re
+
+        # Match milliseconds patterns
+        ms_match = re.search(r"(\d+(?:\.\d+)?)\s*(?:мс|ms)", summary)
+        if ms_match:
+            ms_value = float(ms_match.group(1))
+            return f"{ms_value:.1f}ms"
+
+        # Match seconds patterns
+        s_match = re.search(r"(\d+(?:\.\d+)?)\s*[sс]", summary)
+        if s_match:
+            s_value = float(s_match.group(1))
+            return f"{s_value * 1000:.1f}ms"
+
+        return ""
 
     def set_table_format(self, table_format: str) -> None:
         """
@@ -620,7 +644,7 @@ class OperationTableFormatter:
 
     def _format_meta_operation_rows(self, meta_op: MetaOperation) -> List[Dict]:
         """
-        Format rows for a single meta-operation.
+        Format rows for a single meta-operation with BaseSignals support.
 
         Args:
             meta_op: MetaOperation instance to format
@@ -630,7 +654,9 @@ class OperationTableFormatter:
         """
         rows = []
 
-        if self.config.compact_meta_view:
+        if meta_op.strategy_name == "BaseSignalsBurst":
+            rows.extend(self._format_base_signals_burst_rows(meta_op))
+        elif self.config.compact_meta_view:
             # Compact representation
             rows.append(self._create_meta_operation_summary_row(meta_op))
 
@@ -647,6 +673,200 @@ class OperationTableFormatter:
                 rows.append(self._create_indented_operation_row(sub_op, is_last))
 
         return rows
+
+    def _format_base_signals_burst_rows(self, meta_op: MetaOperation) -> List[Dict]:
+        """Format BaseSignals burst with specialized representation."""
+        rows = []
+
+        # Determine if we should use compact or expanded format
+        operations_count = len(meta_op.operations)
+        use_compact = (
+            operations_count <= self._formatting_config.get("base_signals_burst", {}).get("expand_threshold", 5)
+            or self._formatting_config.get("base_signals_burst", {}).get("default_view") == "compact"
+        )
+
+        if use_compact:
+            # Compact format: single row with aggregated info
+            rows.append(self._create_base_signals_summary_row(meta_op))
+        else:
+            # Expanded format: header + individual operations
+            rows.append(self._create_base_signals_header_row(meta_op))
+            for i, sub_op in enumerate(meta_op.operations):
+                is_last = i == len(meta_op.operations) - 1
+                rows.append(self._create_base_signals_operation_row(sub_op, is_last))
+
+        return rows
+
+    def _create_base_signals_summary_row(self, meta_op: MetaOperation) -> Dict:
+        """Create compact summary row for BaseSignals burst."""
+        if not meta_op.operations:
+            return {
+                "Step": "?",
+                "Sub-operation": "⚡ Empty BaseSignals Burst",
+                "Target": "unknown",
+                "Result data type": "unknown",
+                "Status": "Empty",
+                "Time, s": 0.0,
+                "start_time": 0,
+            }
+
+        # Aggregate information
+        first_step = min(op.step_number for op in meta_op.operations)
+        last_step = max(op.step_number for op in meta_op.operations)
+        step_range = f"► {first_step}-{last_step}" if first_step != last_step else f"► {first_step}"
+
+        burst_type = self._extract_burst_type(meta_op)
+
+        # Target distribution
+        targets = list({op.target for op in meta_op.operations})
+        target_display = "mixed" if len(targets) > 1 else targets[0] if targets else "unknown"
+
+        # Status aggregation
+        all_success = all(op.status == "OK" for op in meta_op.operations)
+        status = "OK" if all_success else "Mixed"
+
+        # Duration calculation
+        total_duration = sum(op.duration_ms or 0 for op in meta_op.operations) / 1000.0
+
+        return {
+            "Step": step_range,
+            "Sub-operation": f"{burst_type} ({len(meta_op.operations)} ops)",
+            "Target": target_display,
+            "Result data type": "mixed",
+            "Status": status,
+            "Time, s": f"{total_duration:.3f}",
+            "start_time": min(op.start_time for op in meta_op.operations),
+            "is_meta": True,
+            "expandable": True,
+            "meta_operations": meta_op.operations,
+        }
+
+    def _create_base_signals_header_row(self, meta_op: MetaOperation) -> Dict:
+        """Create header row for expanded BaseSignals burst."""
+        burst_type = self._extract_burst_type(meta_op)
+        real_actor = self._extract_real_actor(meta_op)
+
+        header_text = f">>> {burst_type} (Meta-cluster: BaseSignalsBurst)"
+        if real_actor:
+            header_text += f" from {real_actor}"
+
+        return {
+            "Step": "",
+            "Sub-operation": header_text,
+            "Target": "",
+            "Result data type": "",
+            "Status": "",
+            "Time, s": "",
+            "start_time": min(op.start_time for op in meta_op.operations) if meta_op.operations else 0,
+            "is_header": True,
+        }
+
+    def _create_base_signals_operation_row(self, sub_op: SubOperationLog, is_last: bool = False) -> Dict:
+        """Create individual operation row for BaseSignals burst."""
+        # Use base signals shortened target name
+        target_display = "base_sig" if "base_signals" in str(sub_op.target) else sub_op.target
+
+        return {
+            "Step": str(sub_op.step_number),
+            "Sub-operation": sub_op.clean_operation_name,
+            "Target": target_display,
+            "Result data type": sub_op.data_type,
+            "Status": sub_op.status,
+            "Time, s": f"{sub_op.execution_time:.3f}",
+            "start_time": sub_op.start_time,
+            "is_indented": True,
+        }
+
+    def format_base_signals_burst_json(self, meta_operation: MetaOperation) -> Dict:
+        """JSON representation of BaseSignals burst for API integration."""
+        operations = meta_operation.operations if hasattr(meta_operation, "operations") else []
+
+        return {
+            "meta_id": meta_operation.meta_id,
+            "strategy": "BaseSignalsBurst",
+            "burst_type": self._determine_burst_type_from_operations(operations),
+            "real_actor": self._extract_real_actor(meta_operation),
+            "summary": meta_operation.summary if hasattr(meta_operation, "summary") else "",
+            "metrics": {
+                "operation_count": len(operations),
+                "duration_ms": self._calculate_total_duration(operations),
+                "target_distribution": self._calculate_target_distribution(operations),
+                "temporal_characteristics": self._calculate_temporal_characteristics(operations),
+            },
+            "operations": [
+                {
+                    "step": op.step_number,
+                    "operation": op.operation_name,
+                    "target": op.target,
+                    "duration_ms": op.duration_ms or 0,
+                    "status": op.status,
+                    "timestamp": op.start_time,
+                }
+                for op in operations
+            ],
+        }
+
+    def _determine_burst_type_from_operations(self, operations: List) -> str:
+        """Determine burst type from operation patterns."""
+        if not operations:
+            return "Empty_Burst"
+
+        operation_names = [op.operation_name for op in operations if hasattr(op, "operation_name")]
+
+        # Parameter Update pattern
+        if any("UPDATE_VALUE" in str(name) for name in operation_names):
+            return "Parameter_Update_Burst"
+
+        # Add Reaction pattern
+        if operation_names.count("SET_VALUE") >= 2 and "UPDATE_VALUE" in str(operation_names):
+            return "Add_Reaction_Burst"
+
+        # Highlight pattern
+        if any("GET_DF_DATA" in str(name) for name in operation_names) and any(
+            "HIGHLIGHT" in str(name) for name in operation_names
+        ):
+            return "Highlight_Reaction_Burst"
+
+        return "Generic_Signal_Burst"
+
+    def _calculate_total_duration(self, operations: List) -> float:
+        """Calculate total duration of operations in milliseconds."""
+        return sum(getattr(op, "duration_ms", 0) or 0 for op in operations)
+
+    def _calculate_target_distribution(self, operations: List) -> Dict[str, int]:
+        """Calculate distribution of operations by target."""
+        targets = {}
+        for op in operations:
+            if hasattr(op, "target"):
+                target = op.target
+                targets[target] = targets.get(target, 0) + 1
+        return targets
+
+    def _calculate_temporal_characteristics(self, operations: List) -> Dict:
+        """Calculate temporal characteristics of the operations."""
+        if not operations:
+            return {}
+
+        start_times = [getattr(op, "start_time", 0) for op in operations if hasattr(op, "start_time")]
+        if not start_times:
+            return {}
+
+        min_time = min(start_times)
+        max_time = max(start_times)
+        total_span = (max_time - min_time) * 1000  # Convert to ms
+
+        # Calculate gaps between consecutive operations
+        start_times.sort()
+        gaps = [(start_times[i + 1] - start_times[i]) * 1000 for i in range(len(start_times) - 1)]
+        avg_gap = sum(gaps) / len(gaps) if gaps else 0
+        max_gap = max(gaps) if gaps else 0
+
+        return {
+            "total_span_ms": total_span,
+            "average_gap_ms": avg_gap,
+            "max_gap_ms": max_gap,
+            "operations_per_second": len(operations) / (total_span / 1000) if total_span > 0 else 0,
+        }
 
     def _create_meta_operation_summary_row(self, meta_op: MetaOperation) -> Dict:
         """
@@ -667,6 +887,7 @@ class OperationTableFormatter:
                 "Result data type": "unknown",
                 "Status": "Empty",
                 "Time, s": 0.0,
+                "start_time": 0,
             }
 
         # Get first step number in group
@@ -677,138 +898,96 @@ class OperationTableFormatter:
         data_types = list({op.data_type for op in meta_op.sub_operations})
         statuses = list({op.status for op in meta_op.sub_operations})
 
-        # Create summaries
-        target_summary = targets[0] if len(targets) == 1 else "mixed"
-        data_type_summary = data_types[0] if len(data_types) == 1 else "mixed"
-        status_summary = statuses[0] if len(statuses) == 1 else "mixed"
+        # Calculate duration
+        total_duration = sum(op.execution_time for op in meta_op.sub_operations)
 
-        # Meta-operation symbol
-        symbol = self.config.meta_operation_symbol
-
-        return {
-            "step": f"{symbol} {first_step}",
-            "sub_operation": meta_op.description,
-            "target": target_summary[:10] + "." if len(target_summary) > 10 else target_summary,
-            "result_data_type": data_type_summary,
-            "status": status_summary,
-            "time": f"{meta_op.total_execution_time:.3f}" if meta_op.total_execution_time else "0.000",
-            "start_time": meta_op.start_time or 0,
-        }
-
-    def _create_meta_operation_header_row(self, meta_op: MetaOperation) -> Dict:
-        """
-        Create header row for expanded meta-operation view.
-
-        Args:
-            meta_op: MetaOperation instance
-
-        Returns:
-            Dict: Row data for header representation
-        """
-        first_step = min(op.step_number for op in meta_op.sub_operations)
-        symbol = "◣"  # Expanded view symbol
+        # Format aggregated values
+        target_display = "mixed" if len(targets) > 1 else targets[0] if targets else "unknown"
+        data_type_display = "mixed" if len(data_types) > 1 else data_types[0] if data_types else "unknown"
+        status_display = "OK" if all(s == "OK" for s in statuses) else "Mixed"
 
         return {
-            "step": f"{symbol} {first_step}",
-            "sub_operation": f"◣ {meta_op.description}",
-            "target": meta_op.get_targets_summary(),
-            "result_data_type": meta_op.get_data_types_summary(),
-            "status": meta_op.get_status_summary(),
-            "time": f"{meta_op.total_execution_time:.3f}" if meta_op.total_execution_time else "0.000",
-            "start_time": meta_op.start_time or 0,
+            "Step": f"► {first_step}-{first_step + len(meta_op.sub_operations) - 1}",
+            "Sub-operation": f"{self.config.meta_operation_symbol} {meta_op.name} ({len(meta_op.sub_operations)} ops)",
+            "Target": target_display,
+            "Result data type": data_type_display,
+            "Status": status_display,
+            "Time, s": f"{total_duration:.3f}",
+            "start_time": min(op.start_time for op in meta_op.sub_operations),
         }
 
     def _create_indented_operation_row(self, sub_op: SubOperationLog, is_last: bool = False) -> Dict:
-        """
-        Create indented row for individual operation within meta-operation.
-
-        Args:
-            sub_op: SubOperationLog instance
-            is_last: Whether this is the last operation in the group
-
-        Returns:
-            Dict: Row data for indented representation
-        """
-        indent = " " * self.config.indent_size
-        branch_symbol = "└" if is_last else "├"
-
+        """Create indented row for operation within meta-operation."""
         return {
-            "step": f"{indent}{branch_symbol}",
-            "sub_operation": sub_op.operation_name,
-            "target": sub_op.target,
-            "result_data_type": sub_op.data_type,
-            "status": sub_op.status,
-            "time": f"{sub_op.execution_time:.3f}" if sub_op.execution_time else "0.000",
+            "Step": f"  {sub_op.step_number}",
+            "Sub-operation": f"  {sub_op.clean_operation_name}",
+            "Target": sub_op.target,
+            "Result data type": sub_op.data_type,
+            "Status": sub_op.status,
+            "Time, s": f"{sub_op.execution_time:.3f}",
             "start_time": sub_op.start_time,
         }
 
-    def _format_single_operation_row(self, sub_op: SubOperationLog) -> Dict:
-        """
-        Format a single operation that's not part of any meta-operation.
-
-        Args:
-            sub_op: SubOperationLog instance
-
-        Returns:
-            Dict: Row data for single operation
-        """
+    def _create_meta_operation_header_row(self, meta_op: MetaOperation) -> Dict:
+        """Create header row for meta-operation in expanded mode."""
         return {
-            "step": str(sub_op.step_number),
-            "sub_operation": sub_op.operation_name,
-            "target": sub_op.target,
-            "result_data_type": sub_op.data_type,
-            "status": sub_op.status,
-            "time": f"{sub_op.execution_time:.3f}" if sub_op.execution_time else "0.000",
-            "start_time": sub_op.start_time,
+            "Step": "",
+            "Sub-operation": f">>> {meta_op.name} (Meta-cluster: {meta_op.strategy_name})",
+            "Target": "",
+            "Result data type": "",
+            "Status": "",
+            "Time, s": "",
+            "start_time": min(op.start_time for op in meta_op.sub_operations) if meta_op.sub_operations else 0,
+            "is_header": True,
         }
 
     def _build_table_from_rows(self, table_rows: List[Dict]) -> str:
-        """
-        Build final table from prepared row data.
-
-        Args:
-            table_rows: List of row dictionaries
-
-        Returns:
-            str: Formatted table string
-        """
+        """Build formatted table from row dictionaries."""
         if not table_rows:
             return "No operations recorded."
 
-        # Prepare data for tabulate
+        # Convert to tabulate format
         headers = ["Step", "Sub-operation", "Target", "Result data type", "Status", "Time, s"]
-
         table_data = []
+
         for row in table_rows:
             table_data.append(
-                [row["step"], row["sub_operation"], row["target"], row["result_data_type"], row["status"], row["time"]]
+                [
+                    row.get("Step", ""),
+                    row.get("Sub-operation", ""),
+                    row.get("Target", ""),
+                    row.get("Result data type", ""),
+                    row.get("Status", ""),
+                    row.get("Time, s", ""),
+                ]
             )
 
-        # Format table
-        try:
-            return tabulate(
-                table_data,
-                headers=headers,
-                tablefmt=self.config.table_format,
-                maxcolwidths=[8, self.config.max_cell_width, 10, 20, 10, 11],
-            )
-        except Exception:
-            # Fallback to simple format
-            return self._format_simple_table(table_data, headers)
+        return tabulate(table_data, headers=headers, tablefmt=self.table_format, stralign="left")
+
+    def _format_single_operation_row(self, sub_op: SubOperationLog) -> Dict:
+        """Format a single operation that's not part of a meta-operation."""
+        return {
+            "Step": str(sub_op.step_number),
+            "Sub-operation": sub_op.clean_operation_name,
+            "Target": sub_op.target,
+            "Result data type": sub_op.data_type,
+            "Status": sub_op.status,
+            "Time, s": f"{sub_op.execution_time:.3f}",
+            "start_time": sub_op.start_time,
+        }
 
 
-# Global formatter instance for use across the module
-default_formatter = OperationTableFormatter()
-
-
-def format_operation_log(operation_log: OperationLog) -> str:
+def format_operation_log(operation_log: OperationLog, config: Optional[FormatterConfig] = None, **kwargs) -> str:
     """
-    Convenience function to format an operation log using the default formatter.
+    Standalone function for formatting operation logs with BaseSignals support.
 
     Args:
-        operation_log: The OperationLog instance to format
+        operation_log: The operation log to format
+        config: Optional formatter configuration
+        **kwargs: Additional formatting options
 
     Returns:
-        str: Formatted operation log as a string
+        str: Formatted operation log
     """
-    return default_formatter.format_operation_log(operation_log)
+    formatter = OperationTableFormatter(config=config, **kwargs)
+    return formatter.format_operation_log(operation_log)

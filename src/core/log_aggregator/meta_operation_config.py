@@ -517,6 +517,23 @@ META_OPERATION_CONFIG = {
         "show_completion_footer": False,
         "table_separator": "\n\n",
         "include_source_info": True,
+        "base_signals_burst": {
+            "default_view": "compact",  # compact | detailed | collapsed
+            "show_real_actor": True,  # Show real actor instead of base_signals.py:51
+            "show_performance_metrics": True,  # Show performance metrics (ops/s, gaps)
+            "show_target_distribution": True,  # Show target distribution
+            "expand_threshold": 5,  # Auto-expand for bursts larger than threshold
+            "color_coding": True,  # Enable color coding and visual indicators
+            "include_timestamps": False,  # Include timestamps in detailed view
+            "aggregate_similar_operations": True,  # Group similar operations together
+            "max_operations_inline": 5,  # Max operations to show inline in compact mode
+            "icon_mapping": {
+                "Parameter_Update_Burst": "🔄",
+                "Add_Reaction_Burst": "➕",
+                "Highlight_Reaction_Burst": "🎯",
+                "Generic_Signal_Burst": "⚡",
+            },
+        },
     },
     "minimalist_settings": {
         "header_format": "source_based",
