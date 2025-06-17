@@ -476,23 +476,149 @@ class BaseSignalsBurstStrategy(MetaOperationStrategy):
 
     def get_meta_operation_description(self, meta_id: str, operations: List[SubOperationLog]) -> str:
         """
-        Generate description for BaseSignals burst cluster.
+        Generate human-readable description of BaseSignalsBurst cluster.
+
+        Format: "BaseSignalsBurst: {count} операций, {duration} мс, actor: {actor}, шум: {noise_status}"
 
         Args:
             meta_id: The meta-operation identifier
-            operations: List of operations in the cluster        Returns:
+            operations: List of operations in the cluster
+
+        Returns:
             str: Human-readable description of the cluster
         """
-        count = len(operations)
         if not operations:
-            return f"BaseSignalsBurst: {count} operations"
-        # Calculate duration from first to last operation
-        duration_ms = 0
-        if operations and operations[0].start_time is not None and operations[-1].end_time is not None:
-            duration_ms = int((operations[-1].end_time - operations[0].start_time) * 1000)
+            return "BaseSignalsBurst: 0 операций"
 
-        # TODO: Stage 3 - add analysis of actors and noise operations
-        return f"BaseSignalsBurst: {count} operations, {duration_ms} ms"
+        # Basic metrics
+        count = len(operations)
+        duration_ms = self._calculate_duration_ms(operations)
+
+        # Analyze actors
+        actor_info = self._analyze_actors(operations)
+        # Analyze noise operations
+        noise_info = self._analyze_noise_operations(operations)
+
+        # Form final description
+        return f"BaseSignalsBurst: {count} операций, {duration_ms} мс, actor: {actor_info}, шум: {noise_info}"
+
+    def _calculate_duration_ms(self, operations: List[SubOperationLog]) -> int:
+        """
+        Calculate total cluster duration in milliseconds.
+
+        Args:
+            operations: Cluster operations
+
+        Returns:
+            int: Duration in milliseconds
+        """
+        if not operations:
+            return 0
+
+        # Filter operations with valid time
+        timed_operations = [op for op in operations if op.start_time is not None]
+        if not timed_operations:
+            return 0
+
+        # Find time boundaries - simplified to reduce complexity
+        start_times = []
+        end_times = []
+
+        for op in timed_operations:
+            if op.start_time:
+                start_times.append(op.start_time)
+
+            # Calculate end time
+            if op.end_time:
+                end_times.append(op.end_time)
+            elif op.start_time and op.execution_time:
+                end_times.append(op.start_time + op.execution_time)
+            elif op.start_time:
+                end_times.append(op.start_time)  # Fallback
+
+        if not start_times or not end_times:
+            return 0
+
+        cluster_start = min(start_times)
+        cluster_end = max(end_times)
+
+        duration_seconds = cluster_end - cluster_start
+        return int(duration_seconds * 1000)  # Convert to ms
+
+    def _analyze_actors(self, operations: List[SubOperationLog]) -> str:
+        """
+        Analyze actors in the cluster of operations.
+
+        Extracts information about operation initiators from SubOperationLog.
+        Since there's no direct actor field, analyze available data.
+
+        Args:
+            operations: Cluster operations
+
+        Returns:
+            str: Actor description ("не задан", specific name, or "множественные")
+        """
+        # Try to extract actor from request_kwargs (if saved)
+        actors = set()
+
+        for op in operations:
+            if hasattr(op, "request_kwargs") and op.request_kwargs:
+                # From base_signals.py we see that actor is passed in request
+                if "actor" in op.request_kwargs:
+                    actor = op.request_kwargs["actor"]
+                    if actor:
+                        actors.add(str(actor))
+
+            # Additional analysis - try to extract from operation_name
+            # if it contains patterns like "component_name_operation"
+            if op.operation_name and "_" in op.operation_name:
+                potential_actor = op.operation_name.split("_")[0]
+                if potential_actor not in ["get", "set", "update", "load", "save"]:  # Exclude verbs
+                    actors.add(potential_actor)
+
+        # Form result
+        if not actors:
+            return "не задан"
+        elif len(actors) == 1:
+            return list(actors)[0]
+        else:
+            # Multiple actors - return first + count
+            first_actor = sorted(actors)[0]
+            return f"{first_actor} (+{len(actors)-1})"
+
+    def _analyze_noise_operations(self, operations: List[SubOperationLog]) -> str:
+        """
+        Analyze presence of noise operations in cluster.
+
+        Args:
+            operations: Cluster operations
+
+        Returns:
+            str: Noise status ("нет", "есть", "есть (X ops)")
+        """
+        noise_count = 0
+        noise_targets = set()
+
+        for op in operations:
+            if not self._is_base_signals_operation(op):
+                noise_count += 1
+                if op.target:
+                    noise_targets.add(str(op.target))
+
+        if noise_count == 0:
+            return "нет"
+        elif noise_count == 1:
+            return "есть"
+        else:
+            # Detailed information for multiple noise
+            targets_info = ""
+            if len(noise_targets) <= 2:
+                targets_info = f" ({', '.join(sorted(noise_targets))})"
+            elif len(noise_targets) > 2:
+                targets_list = sorted(noise_targets)
+                targets_info = f" ({targets_list[0]}, {targets_list[1]}, +{len(noise_targets)-2})"
+
+            return f"есть ({noise_count} ops{targets_info})"
 
     def _find_time_window_cluster(
         self, sub_op: SubOperationLog, context: OperationLog, window_seconds: float
@@ -595,3 +721,72 @@ class BaseSignalsBurstStrategy(MetaOperationStrategy):
             if any(op.step_number == sub_op.step_number for op in meta_op.sub_operations):
                 return True
         return False
+
+    def _get_cluster_statistics(self, operations: List[SubOperationLog]) -> dict:
+        """
+        Collect detailed cluster statistics for debugging and extended analysis.
+
+        Args:
+            operations: Cluster operations
+
+        Returns:
+            Dict[str, Any]: Cluster statistics
+        """
+        base_signals_ops = [op for op in operations if self._is_base_signals_operation(op)]
+        noise_ops = [op for op in operations if not self._is_base_signals_operation(op)]
+
+        stats = {
+            "total_operations": len(operations),
+            "base_signals_operations": len(base_signals_ops),
+            "noise_operations": len(noise_ops),
+            "duration_ms": self._calculate_duration_ms(operations),
+            "actors": self._get_all_actors(operations),
+            "noise_targets": list({op.target for op in noise_ops if op.target}),
+            "time_span": None,
+        }
+
+        # Add time span if available
+        if any(op.start_time for op in operations):
+            valid_times = [op.start_time for op in operations if op.start_time]
+            if valid_times:
+                stats["time_span"] = {
+                    "start": min(valid_times),
+                    "end": max(op.end_time or op.start_time for op in operations if op.start_time),
+                }
+
+        return stats
+
+    def _get_all_actors(self, operations: List[SubOperationLog]) -> List[str]:
+        """Extract all unique actors from operations."""
+        actors = set()
+        for op in operations:
+            if hasattr(op, "request_kwargs") and op.request_kwargs:
+                if "actor" in op.request_kwargs and op.request_kwargs["actor"]:
+                    actors.add(str(op.request_kwargs["actor"]))
+        return sorted(actors)
+
+    def _handle_edge_cases(self, operations: List[SubOperationLog]) -> dict:
+        """
+        Handle special cases in cluster.
+
+        Returns:
+            Dict[str, str]: Dictionary with warnings or cluster peculiarities
+        """
+        warnings = {}
+
+        # Check for operations without time
+        no_time_ops = [op for op in operations if not op.start_time]
+        if no_time_ops:
+            warnings["timing"] = f"{len(no_time_ops)} операций без времени"
+
+        # Check for operations with errors
+        error_ops = [op for op in operations if op.status == "Error"]
+        if error_ops:
+            warnings["errors"] = f"{len(error_ops)} операций с ошибками"
+
+        # Check for suspiciously long clusters (>1 second)
+        duration_ms = self._calculate_duration_ms(operations)
+        if duration_ms > 1000:
+            warnings["duration"] = f"длинный кластер ({duration_ms}мс)"
+
+        return warnings
