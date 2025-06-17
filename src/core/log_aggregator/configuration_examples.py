@@ -199,6 +199,89 @@ JSON_OUTPUT_CONFIG = {
 }
 
 
+# Example конфигурации BaseSignalsMetaBurst
+BASE_SIGNALS_BURST_EXAMPLES = {
+    "minimal": {
+        "enabled": True,
+        "strategies": {
+            "base_signals_burst": {
+                "enabled": True,
+                "config": {
+                    "window_ms": 100.0,
+                    "min_cluster_size": 2,
+                },
+            }
+        },
+    },
+    "detailed": {
+        "enabled": True,
+        "strategies": {
+            "base_signals_burst": {
+                "enabled": True,
+                "config": {
+                    "window_ms": 80.0,
+                    "min_cluster_size": 2,
+                    "include_noise": True,
+                    "max_cluster_duration_ms": 5000,
+                    "priority": 1,
+                },
+            }
+        },
+    },
+    "permissive": {
+        "enabled": True,
+        "strategies": {
+            "base_signals_burst": {
+                "enabled": True,
+                "config": {
+                    "window_ms": 200.0,  # Большое окно
+                    "min_cluster_size": 1,  # Даже одиночные операции
+                    "include_noise": True,
+                    "max_cluster_duration_ms": 10000,
+                },
+            }
+        },
+    },
+}
+
+# Комбинированная конфигурация с BaseSignals + другие стратегии
+HYBRID_BASE_SIGNALS_CONFIG = {
+    "enabled": True,
+    "strategies": {
+        "base_signals_burst": {
+            "enabled": True,
+            "config": {
+                "window_ms": 100.0,
+                "min_cluster_size": 2,
+                "include_noise": True,
+                "max_cluster_duration_ms": 5000,
+                "priority": 1,  # Высокий приоритет
+            },
+        },
+        "time_window": {
+            "enabled": True,
+            "config": {
+                "window_ms": 50.0,
+                "min_cluster_size": 2,
+                "priority": 2,  # Выполняется после base_signals_burst
+            },
+        },
+        "target_cluster": {
+            "enabled": True,
+            "config": {
+                "min_cluster_size": 2,
+                "priority": 3,
+            },
+        },
+    },
+    "formatting": {
+        "mode": "detailed",
+        "show_meta_operations": True,
+        "compact_mode": False,
+    },
+}
+
+
 # Helper function to apply configuration
 def apply_meta_operation_config(config_name: str):
     """
@@ -311,6 +394,10 @@ if __name__ == "__main__":
         ("Model Based", MODEL_BASED_CONFIG),
         ("Minimal", MINIMAL_CONFIG),
         ("JSON Output", JSON_OUTPUT_CONFIG),
+        ("BaseSignals Minimal", BASE_SIGNALS_BURST_EXAMPLES["minimal"]),
+        ("BaseSignals Detailed", BASE_SIGNALS_BURST_EXAMPLES["detailed"]),
+        ("BaseSignals Permissive", BASE_SIGNALS_BURST_EXAMPLES["permissive"]),
+        ("Hybrid BaseSignals", HYBRID_BASE_SIGNALS_CONFIG),
     ]
 
     print("Testing meta-operation configurations...")

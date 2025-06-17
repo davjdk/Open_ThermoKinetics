@@ -46,13 +46,13 @@ class MetaOperationConfig:
             "min_sequence_length": 3,
         },
         "base_signals_burst": {
-            "window_ms": 100.0,
-            "min_cluster_size": 2,
-            "include_noise": True,
+            "window_ms": 100.0,  # Временное окно кластеризации (мс)
+            "min_cluster_size": 2,  # Минимум base_signals операций в кластере
+            "include_noise": True,  # Включать промежуточные операции как шум
+            "max_cluster_duration_ms": 5000,  # Максимальная длительность кластера (мс)
+            "priority": 1,  # Высокий приоритет (выполняется первой)
         },
-    }
-
-    # Predefined strategy configurations based on technical specification
+    }  # Predefined strategy configurations based on technical specification
     PRESET_CONFIGS = {
         "basic_time_grouping": {
             "strategies": [
@@ -63,6 +63,69 @@ class MetaOperationConfig:
                         "window_ms": 50,
                     },
                 }
+            ]
+        },
+        "comprehensive": {
+            "strategies": [
+                {
+                    "name": "base_signals_burst",
+                    "priority": 1,  # Высокий приоритет
+                    "params": {
+                        "window_ms": 100.0,
+                        "min_cluster_size": 2,
+                        "include_noise": True,
+                        "max_cluster_duration_ms": 5000,
+                    },
+                },
+                {
+                    "name": "time_window",
+                    "priority": 2,  # Выполняется после base_signals_burst
+                    "params": {
+                        "window_ms": 50.0,
+                        "min_cluster_size": 2,
+                    },
+                },
+                {
+                    "name": "target_cluster",
+                    "priority": 3,
+                    "params": {
+                        "target_list": ["file_data", "series_data", "calculation_data"],
+                        "max_gap": 2,
+                        "strict_sequence": False,
+                        "min_cluster_size": 2,
+                    },
+                },
+                {
+                    "name": "name_similarity",
+                    "priority": 4,
+                    "params": {
+                        "name_pattern": "GET_.*|SET_.*|UPDATE_.*",
+                        "prefix_length": 3,
+                        "case_sensitive": False,
+                        "min_cluster_size": 2,
+                    },
+                },
+                {
+                    "name": "sequence_count",
+                    "priority": 5,
+                    "params": {
+                        "min_sequence_length": 3,
+                    },
+                },
+            ]
+        },
+        "base_signals_focused": {
+            "strategies": [
+                {
+                    "name": "base_signals_burst",
+                    "priority": 1,
+                    "params": {
+                        "window_ms": 150.0,  # Увеличенное окно для специализированного анализа
+                        "min_cluster_size": 1,  # Даже одиночные операции
+                        "include_noise": True,
+                        "max_cluster_duration_ms": 10000,
+                    },
+                },
             ]
         },
         "enhanced_clustering": {
@@ -394,7 +457,53 @@ class MetaOperationConfig:
         Returns:
             Dict containing preset configuration or None if not found
         """
-        return self.PRESET_CONFIGS.get(preset_name)
+        return self.PRESET_CONFIGS.get(preset_name) @ classmethod
+
+    def create_base_signals_detector(
+        cls, window_ms: float = 100.0, min_cluster_size: int = 2, include_noise: bool = True
+    ) -> MetaOperationDetector:
+        """
+        Create a detector focused on base_signals operations analysis.
+
+        Args:
+            window_ms: Temporal clustering window
+            min_cluster_size: Minimum number of base_signals operations in cluster
+            include_noise: Whether to include intermediate operations
+
+        Returns:
+            MetaOperationDetector: Configured detector
+        """
+        config = {
+            "enabled": True,
+            "strategies": {
+                "base_signals_burst": {
+                    "enabled": True,
+                    "config": {
+                        "window_ms": window_ms,
+                        "min_cluster_size": min_cluster_size,
+                        "include_noise": include_noise,
+                        "max_cluster_duration_ms": 5000,
+                        "priority": 1,
+                    },
+                }
+            },
+        }
+
+        config_instance = cls()
+        config_instance.load_from_dict(config)
+        return config_instance.create_detector()
+
+    @classmethod
+    def create_hybrid_detector(cls) -> MetaOperationDetector:
+        """
+        Create a detector with combination of base_signals and general strategies.
+
+        Returns:
+            MetaOperationDetector: Hybrid detector
+        """
+        config_instance = cls()
+        config_instance.apply_preset_config("comprehensive")
+        return config_instance.create_detector()
 
 
 # Create a global configuration instance
@@ -460,6 +569,14 @@ META_OPERATION_CONFIG = {
         "include_source_info": True,
     },
     "strategies": {
+        "base_signals_burst": {
+            "enabled": True,
+            "window_ms": 100.0,
+            "min_cluster_size": 2,
+            "include_noise": True,
+            "max_cluster_duration_ms": 5000,
+            "priority": 1,
+        },
         "time_window": {"enabled": True, "window_ms": 50.0, "min_cluster_size": 2},
         "target_cluster": {"enabled": True, "min_cluster_size": 2},
         "name_similarity": {"enabled": True, "name_pattern": "GET_.*|SET_.*|UPDATE_.*", "min_cluster_size": 2},

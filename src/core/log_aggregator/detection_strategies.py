@@ -396,17 +396,35 @@ class BaseSignalsBurstStrategy(MetaOperationStrategy):
         return "BaseSignalsBurst"
 
     def validate_config(self) -> None:
-        """Validate BaseSignalsBurst configuration."""
+        """Расширенная валидация конфигурации стратегии."""
+        # Базовые обязательные параметры
         required_params = ["window_ms", "min_cluster_size"]
         for param in required_params:
             if param not in self.config:
                 raise ValueError(f"BaseSignalsBurstStrategy missing required parameter: {param}")
 
-        if self.config["window_ms"] <= 0:
-            raise ValueError("BaseSignalsBurstStrategy window_ms must be positive")
+        # Валидация типов и диапазонов
+        window_ms = self.config["window_ms"]
+        if not isinstance(window_ms, (int, float)) or window_ms <= 0:
+            raise ValueError("BaseSignalsBurstStrategy window_ms must be positive number")
 
-        if self.config["min_cluster_size"] < 1:
-            raise ValueError("BaseSignalsBurstStrategy min_cluster_size must be >= 1")
+        min_cluster_size = self.config["min_cluster_size"]
+        if not isinstance(min_cluster_size, int) or min_cluster_size < 1:
+            raise ValueError("BaseSignalsBurstStrategy min_cluster_size must be integer >= 1")
+
+        # Валидация опциональных параметров
+        if "max_cluster_duration_ms" in self.config:
+            max_duration = self.config["max_cluster_duration_ms"]
+            if not isinstance(max_duration, (int, float)) or max_duration <= 0:
+                raise ValueError("BaseSignalsBurstStrategy max_cluster_duration_ms must be positive")
+
+            # Логическая проверка: максимальная длительность должна быть больше окна
+            if max_duration < window_ms:
+                raise ValueError("max_cluster_duration_ms must be >= window_ms")
+
+        if "include_noise" in self.config:
+            if not isinstance(self.config["include_noise"], bool):
+                raise ValueError("BaseSignalsBurstStrategy include_noise must be boolean")
 
     def detect(self, sub_op: SubOperationLog, context: OperationLog) -> Optional[str]:
         """
@@ -790,3 +808,14 @@ class BaseSignalsBurstStrategy(MetaOperationStrategy):
             warnings["duration"] = f"длинный кластер ({duration_ms}мс)"
 
         return warnings
+
+
+# Export list for module
+__all__ = [
+    "TimeWindowStrategy",
+    "NameSimilarityStrategy",
+    "TargetClusterStrategy",
+    "SequenceCountStrategy",
+    "BaseSignalsBurstStrategy",  # НОВЫЙ ЭКСПОРТ
+    "MetaOperationStrategy",
+]
