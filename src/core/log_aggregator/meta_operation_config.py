@@ -305,20 +305,26 @@ class MetaOperationConfig:
         if not self._global_enabled or not self._enabled_strategies:
             return None
 
-        strategies = []
-
+        strategies = []  # Prepare strategies with their configs for priority sorting
+        strategy_data = []
         for strategy_name in self._enabled_strategies:
             if strategy_name in self.STRATEGY_REGISTRY:
                 strategy_class = self.STRATEGY_REGISTRY[strategy_name]
                 config = self._strategy_configs.get(strategy_name, {})
+                strategy_data.append((strategy_name, strategy_class, config))
 
-                try:
-                    # Create strategy instance with configuration
-                    strategy = strategy_class(config)
-                    strategies.append(strategy)
-                except Exception:
-                    # Skip strategies that fail to initialize
-                    continue
+        # Sort by priority (BaseSignalsBurst should be first)
+        sorted_strategy_data = self._sort_strategies_by_priority(strategy_data)
+
+        # Create strategy instances in priority order
+        for strategy_name, strategy_class, config in sorted_strategy_data:
+            try:
+                # Create strategy instance with configuration
+                strategy = strategy_class(config)
+                strategies.append(strategy)
+            except Exception:
+                # Skip strategies that fail to initialize
+                continue
 
         if not strategies:
             return None
@@ -346,14 +352,18 @@ class MetaOperationConfig:
 
         # Clear current configuration
         self._enabled_strategies.clear()
-        self._strategy_configs.clear()
-
-        # Load strategy configurations
+        self._strategy_configs.clear()  # Load strategy configurations with all parameters
         strategies_config = config_dict.get("strategies", {})
 
         for strategy_name, strategy_data in strategies_config.items():
             if strategy_data.get("enabled", False):
-                config = strategy_data.get("config", {})
+                # Handle both old format (config nested) and new format (direct params)
+                if "config" in strategy_data:
+                    config = strategy_data["config"]
+                else:
+                    # Extract all parameters except 'enabled'
+                    config = {k: v for k, v in strategy_data.items() if k != "enabled"}
+
                 self.enable_strategy(strategy_name, config)
 
     def to_dict(self) -> Dict[str, Any]:
@@ -425,13 +435,41 @@ class MetaOperationConfig:
         """
         return self.PRESET_CONFIGS.get(preset_name)
 
+    def _sort_strategies_by_priority(self, strategies_list):
+        """
+        Sort strategies by priority (1 = highest priority).
 
-# Create a global configuration instance
+        Args:
+            strategies_list: List of (strategy_name, strategy_class, config) tuples
+
+        Returns:
+            List sorted by priority
+        """
+
+        def get_priority(item):
+            _, _, config = item
+            return config.get("priority", 999)  # Default low priority
+
+        return sorted(strategies_list, key=get_priority)
+
+
+# Create a global configuration instance with BaseSignalsBurst priority
 DEFAULT_META_OPERATION_CONFIG = MetaOperationConfig()
 
-# Configure with reasonable defaults
-DEFAULT_META_OPERATION_CONFIG.enable_strategy("time_window", {"window_ms": 50.0})
-DEFAULT_META_OPERATION_CONFIG.enable_strategy("target_cluster", {"min_cluster_size": 3})
+# Configure with BaseSignalsBurst as highest priority strategy
+DEFAULT_META_OPERATION_CONFIG.enable_strategy(
+    "base_signals_burst",
+    {
+        "priority": 1,
+        "time_window_ms": 100,
+        "min_burst_size": 2,
+        "max_gap_ms": 50,
+        "max_duration_ms": 10.0,
+        "include_cross_target": True,
+    },
+)
+DEFAULT_META_OPERATION_CONFIG.enable_strategy("time_window", {"priority": 2, "window_ms": 50.0})
+DEFAULT_META_OPERATION_CONFIG.enable_strategy("target_cluster", {"priority": 3, "min_cluster_size": 3})
 
 
 def get_default_detector() -> Optional[MetaOperationDetector]:
@@ -489,10 +527,24 @@ META_OPERATION_CONFIG = {
         "include_source_info": True,
     },
     "strategies": {
-        "time_window": {"enabled": True, "window_ms": 50.0, "min_cluster_size": 2},
-        "target_cluster": {"enabled": True, "min_cluster_size": 2},
-        "name_similarity": {"enabled": True, "name_pattern": "GET_.*|SET_.*|UPDATE_.*", "min_cluster_size": 2},
-        "sequence_count": {"enabled": True, "min_sequence_length": 3},
+        "base_signals_burst": {
+            "enabled": True,
+            "priority": 1,
+            "time_window_ms": 100,
+            "min_burst_size": 2,
+            "max_gap_ms": 50,
+            "max_duration_ms": 10.0,
+            "include_cross_target": True,
+        },
+        "time_window": {"enabled": True, "priority": 2, "window_ms": 50.0, "min_cluster_size": 2},
+        "target_cluster": {"enabled": True, "priority": 3, "min_cluster_size": 2},
+        "name_similarity": {
+            "enabled": True,
+            "priority": 4,
+            "name_pattern": "GET_.*|SET_.*|UPDATE_.*",
+            "min_cluster_size": 2,
+        },
+        "sequence_count": {"enabled": True, "priority": 5, "min_sequence_length": 3},
     },
 }
 
@@ -545,3 +597,27 @@ def validate_formatting_config(config: Dict) -> Dict:
         validated_config["table_separator"] = "\n\n"
 
     return validated_config
+
+
+def get_meta_operation_config_with_fallback() -> Dict[str, Any]:
+    """
+    Get meta-operation configuration with fallback for backward compatibility.
+
+    Returns:
+        Dict: Configuration with BaseSignalsBurst added if missing
+    """
+    config = META_OPERATION_CONFIG.copy()
+
+    # Add BaseSignalsBurst if not present for backward compatibility
+    if "base_signals_burst" not in config.get("strategies", {}):
+        config.setdefault("strategies", {})["base_signals_burst"] = {
+            "enabled": False,  # Disabled by default for compatibility
+            "priority": 1,
+            "time_window_ms": 100,
+            "min_burst_size": 2,
+            "max_gap_ms": 50,
+            "max_duration_ms": 10.0,
+            "include_cross_target": True,
+        }
+
+    return config
