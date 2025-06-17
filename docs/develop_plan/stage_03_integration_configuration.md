@@ -119,15 +119,271 @@ META_OPERATION_CONFIG = {
 4. **Спроектировать интеграцию с форматтерами** - поддержка всех режимов вывода
 5. **Обеспечить неинвазивность** - минимальные изменения в существующем коде
 
+## Детальная интеграция с MetaOperationConfig
+
+### Расширение STRATEGY_REGISTRY
+
+В файле `meta_operation_config.py` необходимо добавить новую стратегию в реестр:
+
+```python
+from .detection_strategies import (
+    BaseSignalsBurstStrategy,  # Новый импорт
+    NameSimilarityStrategy,
+    SequenceCountStrategy, 
+    TargetClusterStrategy,
+    TimeWindowStrategy,
+)
+
+class MetaOperationConfig:
+    STRATEGY_REGISTRY: Dict[str, Type[MetaOperationStrategy]] = {
+        "time_window": TimeWindowStrategy,
+        "name_similarity": NameSimilarityStrategy,
+        "target_cluster": TargetClusterStrategy,
+        "sequence_count": SequenceCountStrategy,
+        "base_signals_burst": BaseSignalsBurstStrategy,  # Новая регистрация
+    }
+```
+
+### Расширение DEFAULT_CONFIG
+
+Добавление конфигурации по умолчанию для новой стратегии:
+
+```python
+DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
+    "time_window": {
+        "window_ms": 50.0,
+        "min_cluster_size": 2,
+    },
+    # ... существующие стратегии ...
+    "base_signals_burst": {
+        "window_ms": 100.0,
+        "min_cluster_size": 2,
+        "actor_threshold": 3,  # Минимум операций для выделения актора
+        "noise_tolerance": 1,  # Максимум шумовых операций в burst
+    },
+}
+```
+
+### Интеграция в предустановленные конфигурации
+
+Добавление стратегии в preset-конфигурации для различных сценариев использования:
+
+```python
+PRESET_CONFIGS = {
+    # ... существующие конфигурации ...
+    "base_signals_focused": {
+        "strategies": [
+            {
+                "name": "base_signals_burst",
+                "priority": 1,
+                "params": {
+                    "window_ms": 80,
+                    "min_cluster_size": 2,
+                    "actor_threshold": 2,
+                    "noise_tolerance": 2,
+                },
+            },
+            {
+                "name": "time_window", 
+                "priority": 2,
+                "params": {
+                    "window_ms": 50,
+                },
+            },
+        ]
+    },
+    "enhanced_clustering": {
+        "strategies": [
+            {
+                "name": "time_window",
+                "priority": 1,
+                "params": {"window_ms": 50},
+            },
+            {
+                "name": "base_signals_burst",  # Добавление в существующую конфигурацию
+                "priority": 2,
+                "params": {
+                    "window_ms": 100,
+                    "min_cluster_size": 2,
+                },
+            },
+            {
+                "name": "target_cluster",
+                "priority": 3,
+                "params": {
+                    "target_list": ["file_data", "series_data", "calculation_data"],
+                    "max_gap": 1,
+                    "strict_sequence": False,
+                    "min_cluster_size": 2,
+                },
+            },
+            # ... остальные стратегии ...
+        ]
+    },
+}
+```
+
+## План интеграционного тестирования
+
+### Тестирование изоляции стратегии
+
+**Тест 1: Независимая работа**
+- Создать operation_log только с base_signals операциями
+- Убедиться, что BaseSignalsBurstStrategy корректно их кластеризует
+- Проверить, что другие стратегии не влияют на результат
+
+**Тест 2: Приоритетность обнаружения**
+- Создать смешанный operation_log с base_signals и другими операциями
+- Настроить приоритет BaseSignalsBurstStrategy = 1
+- Убедиться, что base_signals операции захватываются именно этой стратегией
+
+**Тест 3: Взаимодействие с TimeWindowStrategy**
+- Создать операции base_signals в временном окне 50ms
+- Проверить, что при разных приоритетах стратегий результат корректен
+- Убедиться в отсутствии дублирования мета-операций
+
+### Тестирование конфигурации
+
+**Тест 4: Отключение стратегии**
+```python
+config = {
+    "strategies": [
+        {
+            "name": "base_signals_burst",
+            "priority": 1, 
+            "params": {"enabled": False}  # Отключена
+        }
+    ]
+}
+# Убедиться, что мета-операции base_signals не создаются
+```
+
+**Тест 5: Параметризованная конфигурация**
+- Протестировать различные значения window_ms (50, 100, 200ms)
+- Протестировать min_cluster_size (1, 2, 3, 5)
+- Убедиться в корректной валидации параметров
+
+**Тест 6: Preset-конфигурации**
+- Создать детектор через каждую preset-конфигурацию
+- Проверить корректность инициализации BaseSignalsBurstStrategy
+- Протестировать работу в составе multiple-strategy configurations
+
+### Тестирование обратной совместимости
+
+**Тест 7: Старые конфигурации**
+- Загрузить конфигурации без base_signals_burst стратегии
+- Убедиться, что система работает как раньше
+- Проверить отсутствие ошибок инициализации
+
+**Тест 8: Форматирование логов**
+- Протестировать все режимы вывода (compact, detailed, table, json)
+- Убедиться в корректном отображении base_signals мета-операций
+- Проверить backward compatibility форматтеров
+
+## Обратная совместимость
+
+### Принципы совместимости
+
+1. **Неинвазивность**: Существующий код работает без изменений при отключенной стратегии
+2. **Опциональность**: Стратегия активируется только при явном включении в конфигурации
+3. **Graceful degradation**: Ошибки в новой стратегии не влияют на основную функциональность
+4. **API-стабильность**: Не изменяются существующие интерфейсы и методы
+
+### Гарантии совместимости
+
+**Конфигурационная совместимость**:
+- Старые конфигурации работают без base_signals_burst секции
+- Новые параметры имеют разумные значения по умолчанию
+- Неизвестные параметры игнорируются с предупреждением
+
+**Форматирование логов**:
+- Существующие форматтеры поддерживают новые мета-операции автоматически
+- Режимы вывода (compact/detailed) не изменяют поведение для других стратегий
+- JSON-формат расширяется только новыми полями (без breaking changes)
+
+**Runtime-совместимость**:
+- AggregatedOperationLogger работает с/без новой стратегии
+- MetaOperationDetector корректно обрабатывает пустой список стратегий
+- Валидация конфигурации fail-safe для новых параметров
+
+### Миграционный план
+
+**Фаза 1**: Добавление стратегии в отключенном состоянии
+- Добавить BaseSignalsBurstStrategy в STRATEGY_REGISTRY
+- Все preset-конфигурации не включают новую стратегию
+- DEFAULT_CONFIG содержит параметры с enabled: false
+
+**Фаза 2**: Опциональное включение
+- Документировать новую стратегию в руководстве пользователя
+- Добавить base_signals_burst в одну из preset-конфигураций (например, "experimental")
+- Провести тестирование в production-like окружении
+
+**Фаза 3**: Полная интеграция
+- Включить стратегию в стандартные preset-конфигурации
+- Обновить документацию с примерами использования
+- Мониторинг производительности и качества детекции
+
+## План интеграционного тестирования
+
+### Автоматизированные тесты
+
+**test_base_signals_integration.py**:
+```python
+def test_strategy_registration():
+    """Тест регистрации стратегии в MetaOperationConfig"""
+    assert "base_signals_burst" in MetaOperationConfig.STRATEGY_REGISTRY
+    
+def test_detector_creation_with_base_signals():
+    """Тест создания детектора с base_signals стратегией"""
+    config = MetaOperationConfig(preset="base_signals_focused")
+    detector = config.create_detector()
+    strategy_names = [s.strategy_name for s in detector.strategies]
+    assert "BaseSignalsBurst" in strategy_names
+
+def test_interaction_with_time_window():
+    """Тест взаимодействия с TimeWindowStrategy"""
+    # Создать операции, подходящие под обе стратегии
+    # Проверить приоритетность обработки
+    pass
+
+def test_backward_compatibility():
+    """Тест обратной совместимости"""
+    # Протестировать старые конфигурации
+    # Убедиться в отсутствии breaking changes
+    pass
+```
+
+### Интеграционные тесты
+
+**test_meta_operation_integration.py**:
+```python
+def test_end_to_end_base_signals_detection():
+    """End-to-end тест детекции base_signals мета-операций"""
+    # Создать реальный OperationLog с base_signals операциями
+    # Применить полный pipeline детекции
+    # Проверить корректность результирующих MetaOperation
+    pass
+
+def test_formatter_integration():
+    """Тест интеграции с форматтерами логов"""
+    # Создать мета-операции с base_signals
+    # Протестировать все форматтеры (compact, detailed, json)
+    # Проверить корректность вывода
+    pass
+```
+
 ## Результаты этапа
 
-- [ ] Определен механизм регистрации в MetaOperationDetector
-- [ ] Спроектировано взаимодействие с существующими стратегиями
-- [ ] Создана структура конфигурации для BaseSignalsMetaBurst
-- [ ] Определена интеграция с форматтерами логов  
-- [ ] Обеспечена полная отключаемость через конфигурацию
-- [ ] Документированы требования к неинвазивности
-- [ ] Создан план обратной совместимости
+- [x] Определен механизм регистрации в MetaOperationDetector
+- [x] Спроектировано взаимодействие с существующими стратегиями
+- [x] Создана структура конфигурации для BaseSignalsMetaBurst
+- [x] Определена интеграция с форматтерами логов  
+- [x] Обеспечена полная отключаемость через конфигурацию
+- [x] Документированы требования к неинвазивности
+- [x] Создан план обратной совместимости
+- [x] Разработан план интеграционного тестирования
+- [x] Определены preset-конфигурации для различных сценариев
+- [x] Спроектирован миграционный план поэтапного внедрения
 
 ## Следующий этап
 
