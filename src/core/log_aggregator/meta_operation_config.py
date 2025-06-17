@@ -460,3 +460,53 @@ META_OPERATION_CONFIG = {
         "sequence_count": {"enabled": True, "min_sequence_length": 3},
     },
 }
+
+
+def validate_formatting_config(config: Dict) -> Dict:
+    """
+    Validate formatting configuration and apply safe defaults.
+
+    Args:
+        config: Configuration dictionary to validate
+
+    Returns:
+        Dict: Validated configuration with safe defaults
+    """
+    validated_config = config.copy()
+
+    # Check mode validity
+    mode = validated_config.get("mode", "standard")
+    if mode not in ["standard", "minimalist"]:
+        validated_config["mode"] = "standard"
+
+    # Check table_format validity
+    table_format = validated_config.get("table_format", "grid")
+    valid_formats = ["grid", "simple", "plain", "fancy", "pipe", "orgtbl", "jira", "presto", "pretty", "psql", "rst"]
+    if table_format not in valid_formats:
+        validated_config["table_format"] = "grid"
+
+    # Check header_format validity
+    header_format = validated_config.get("header_format", "standard")
+    if header_format not in ["standard", "source_based"]:
+        validated_config["header_format"] = "standard"
+
+    # Validate boolean parameters
+    bool_params = ["show_decorative_borders", "show_completion_footer", "include_source_info"]
+    for param in bool_params:
+        if param in validated_config and not isinstance(validated_config[param], bool):
+            # Try to convert to boolean
+            try:
+                validated_config[param] = bool(validated_config[param])
+            except (ValueError, TypeError):
+                # Set safe default
+                if param == "show_completion_footer":
+                    validated_config[param] = True  # Default to showing footer
+                else:
+                    validated_config[param] = False
+
+    # Validate table_separator
+    separator = validated_config.get("table_separator", "")
+    if not isinstance(separator, str):
+        validated_config["table_separator"] = "\n\n"
+
+    return validated_config

@@ -60,9 +60,7 @@ class OperationTableFormatter:
         """
 
         # Store minimalist mode setting
-        self.minimalist_mode = minimalist_mode
-
-        # Load formatting configuration
+        self.minimalist_mode = minimalist_mode  # Load formatting configuration
         if formatting_config is None:
             from .meta_operation_config import META_OPERATION_CONFIG
 
@@ -70,12 +68,19 @@ class OperationTableFormatter:
         else:
             self._formatting_config = formatting_config.copy()
 
+        # Validate formatting configuration
+        from .meta_operation_config import validate_formatting_config
+
+        self._formatting_config = validate_formatting_config(self._formatting_config)
+
         # Apply minimalist settings if enabled
         if minimalist_mode or self._formatting_config.get("mode") == "minimalist":
             from .meta_operation_config import META_OPERATION_CONFIG
 
             minimalist_settings = META_OPERATION_CONFIG.get("minimalist_settings", {})
             self._formatting_config.update(minimalist_settings)
+            # Re-validate after applying minimalist settings
+            self._formatting_config = validate_formatting_config(self._formatting_config)
 
         # Use config if provided, otherwise create default with legacy parameters
         if config is not None:
@@ -158,19 +163,20 @@ class OperationTableFormatter:
                 parts.append(error_block)
                 parts.append("")  # Empty line        # 5. Summary section
         summary = self._format_operation_summary(operation_log, operation_id)
-        parts.append(summary)
-
-        # 6. Footer separator (only in standard mode)
+        parts.append(summary)  # 6. Footer separator (only in standard mode)
         show_footer = self._formatting_config.get("show_completion_footer", True)
         if show_footer:
             footer = self._format_operation_footer(operation_log)
             parts.append(footer)
-            parts.append("=" * 80)
 
-        # Add table separator in minimalist mode
-        separator = self._formatting_config.get("table_separator", "")
-        if separator and self._formatting_config.get("mode") == "minimalist":
-            parts.append(separator)
+            if show_borders:
+                parts.append("=" * 80)
+
+        # Add table separator in minimalist mode instead of footer
+        if not show_footer:
+            separator = self._formatting_config.get("table_separator", "")
+            if separator:
+                parts.append(separator)
 
         return "\n".join(parts)
 
