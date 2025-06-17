@@ -11,14 +11,7 @@ resolution and enhanced analytics.
 
 from typing import Dict, List, Optional
 
-from .base_signals_utils import (
-    calculate_target_distribution,
-    calculate_temporal_characteristics,
-    determine_burst_type,
-    generate_burst_summary,
-    generate_stable_meta_id,
-    is_base_signals_operation,
-)
+from .base_signals_utils import is_base_signals_operation
 from .meta_operation_detector import MetaOperationStrategy
 from .operation_log import OperationLog
 from .sub_operation_log import SubOperationLog
@@ -26,12 +19,10 @@ from .sub_operation_log import SubOperationLog
 
 class BaseSignalsBurstStrategy(MetaOperationStrategy):
     """
-    Groups base_signals.py operations that occur in temporal bursts.
+    Стратегия для кластеризации операций base_signals.py:51 в Signal Bursts.
 
-    This strategy specifically targets operations originating from base_signals.py:51
-    that represent atomic inter-module communication bursts. These operations are
-    typically fast, atomic, and occur in rapid succession as part of higher-level
-    user actions.
+    Группирует быстрые последовательности handle_request_cycle операций
+    в логически связанные мета-операции с восстановлением реального актора.
 
     Key characteristics:
     - Operations from base_signals.py, line 51
@@ -43,59 +34,89 @@ class BaseSignalsBurstStrategy(MetaOperationStrategy):
 
     @property
     def strategy_name(self) -> str:
+        """Возвращает уникальное имя стратегии."""
         return "BaseSignalsBurst"
 
     def validate_config(self) -> None:
-        """Validate BaseSignalsBurst configuration."""
-        required_params = ["time_window_ms", "min_burst_size"]
+        """Валидация конфигурации стратегии."""
+        required_params = ["time_window_ms"]
         for param in required_params:
             if param not in self.config:
                 raise ValueError(f"BaseSignalsBurstStrategy missing required parameter: {param}")
 
-        if self.config["time_window_ms"] <= 0:
-            raise ValueError("BaseSignalsBurstStrategy time_window_ms must be positive")
+        # Валидация временного окна
+        window_ms = self.config["time_window_ms"]
+        if not isinstance(window_ms, (int, float)) or window_ms <= 0:
+            raise ValueError(f"time_window_ms must be positive, got: {window_ms}")
 
-        if self.config["min_burst_size"] < 2:
-            raise ValueError("BaseSignalsBurstStrategy min_burst_size must be >= 2")
+        # Валидация минимального размера кластера
+        min_size = self.config.get("min_burst_size", 2)
+        if not isinstance(min_size, int) or min_size < 2:
+            raise ValueError(f"min_burst_size must be at least 2, got: {min_size}")
 
-        # Validate optional parameters
-        if "max_gap_ms" in self.config and self.config["max_gap_ms"] <= 0:
-            raise ValueError("BaseSignalsBurstStrategy max_gap_ms must be positive")
+        # Валидация максимального разрыва
+        max_gap = self.config.get("max_gap_ms", 50)
+        if not isinstance(max_gap, (int, float)) or max_gap < 0:
+            raise ValueError(f"max_gap_ms must be non-negative, got: {max_gap}")
 
-        if "max_duration_ms" in self.config and self.config["max_duration_ms"] <= 0:
-            raise ValueError("BaseSignalsBurstStrategy max_duration_ms must be positive")
+        # Валидация максимальной длительности
+        max_duration = self.config.get("max_duration_ms", 10.0)
+        if not isinstance(max_duration, (int, float)) or max_duration <= 0:
+            raise ValueError(f"max_duration_ms must be positive, got: {max_duration}")
 
     def detect(self, sub_op: SubOperationLog, context: OperationLog) -> Optional[str]:
         """
-        Detect if operation belongs to a BaseSignals burst.
+        Обнаружение принадлежности операции к BaseSignals burst.
 
         Args:
-            sub_op: The sub-operation to analyze
-            context: The full operation log for context
+            sub_op: Анализируемая подоперация
+            context: Полный контекст родительской операции
 
         Returns:
-            Optional[str]: Meta-operation ID if clustered, None otherwise
+            meta_id если операция принадлежит бурсту, иначе None
         """
-        # Filter: only base_signals operations
+        # Фильтрация: только base_signals операции
         if not self._is_base_signals_operation(sub_op):
-            return None  # Find all base_signals operations in context
+            return None
+
+        # Поиск всех base_signals операций в контексте
         base_signals_ops = [op for op in context.sub_operations if self._is_base_signals_operation(op)]
 
-        # Group by temporal proximity
+        # Группировка по временной близости
         clusters = self._group_by_temporal_proximity(base_signals_ops)
 
-        # Find cluster containing current operation
+        # Найти кластер, содержащий текущую операцию
         for i, cluster in enumerate(clusters):
             if sub_op in cluster:
-                # Generate stable meta_id using utility function
-                meta_id = generate_stable_meta_id(cluster, i)
+                # Генерация стабильного meta_id на основе первой операции кластера
+                first_op = min(cluster, key=lambda op: op.start_time)
+                meta_id = f"base_signals_burst_{int(first_op.start_time * 1000)}_{i}"
                 return meta_id
 
         return None
 
+    def get_meta_operation_description(self, meta_id: str, operations: List[SubOperationLog]) -> str:
+        """Генерация описания мета-операции для форматтера."""
+        burst_type = self._determine_burst_type(operations)
+        temporal_chars = self._calculate_temporal_characteristics(operations)
+        target_dist = self._calculate_target_distribution(operations)
+
+        # Генерация базовой сводки
+        summary = self._generate_burst_summary(operations, burst_type, temporal_chars, target_dist)
+
+        # Добавление контекстной информации
+        from .operation_logger import get_current_operation_logger
+
+        context = get_current_operation_logger()
+        if context and hasattr(context, "current_operation") and context.current_operation:
+            real_actor = self._extract_real_actor(context.current_operation)
+            summary += f" (initiated by {real_actor})"
+
+        return summary
+
     def _is_base_signals_operation(self, sub_op: SubOperationLog) -> bool:
         """
-        Check if operation is a base_signals operation.
+        Проверка является ли операция base_signals операцией.
 
         Criteria based on architectural analysis:
         - Origin: base_signals.py:51 (handle_request_cycle dispatcher)
@@ -107,7 +128,7 @@ class BaseSignalsBurstStrategy(MetaOperationStrategy):
 
     def _group_by_temporal_proximity(self, operations: List[SubOperationLog]) -> List[List[SubOperationLog]]:
         """
-        Group operations by temporal proximity with gap analysis.
+        Группировка операций по временной близости.
 
         Args:
             operations: List of base_signals operations to group
@@ -123,7 +144,7 @@ class BaseSignalsBurstStrategy(MetaOperationStrategy):
 
         window_sec = self.config["time_window_ms"] / 1000.0  # Convert to seconds
         max_gap_sec = self.config.get("max_gap_ms", 50) / 1000.0  # Default 50ms
-        min_burst_size = self.config["min_burst_size"]
+        min_burst_size = self.config.get("min_burst_size", 2)
 
         clusters = []
         current_cluster = []
@@ -145,29 +166,100 @@ class BaseSignalsBurstStrategy(MetaOperationStrategy):
                         clusters.append(current_cluster)
 
                     # Start new cluster
-                    current_cluster = [op]  # Add final cluster if it meets size requirements
+                    current_cluster = [op]
+
+        # Add final cluster if it meets size requirements
         if len(current_cluster) >= min_burst_size:
             clusters.append(current_cluster)
 
         return clusters
 
-    def get_meta_operation_description(self, meta_id: str, operations: List[SubOperationLog]) -> str:
-        """
-        Generate enhanced description for BaseSignals burst cluster.
+    def _determine_burst_type(self, operations: List[SubOperationLog]) -> str:
+        """Определение типа бурста на основе паттерна операций."""
+        operation_types = [op.operation_name for op in operations]
 
-        Stage 3 implementation: Uses utility functions for comprehensive analysis
-        including burst type detection, temporal characteristics, and target distribution.
-        """
+        # Parameter Update pattern: GET_VALUE → CHECK → SET_VALUE → UPDATE_VALUE
+        if any("UPDATE_VALUE" in str(op_type) for op_type in operation_types):
+            return "Parameter_Update_Burst"
+
+        # Add Reaction pattern: SET_VALUE → GET_VALUE → UPDATE_VALUE (multiple)
+        if operation_types.count("SET_VALUE") >= 2 and "UPDATE_VALUE" in str(operation_types):
+            return "Add_Reaction_Burst"
+
+        # Highlight pattern: GET_DF_DATA → GET_VALUE → HIGHLIGHT_*
+        if any("GET_DF_DATA" in str(op_type) for op_type in operation_types) and any(
+            "HIGHLIGHT" in str(op_type) for op_type in operation_types
+        ):
+            return "Highlight_Reaction_Burst"
+
+        # Generic burst
+        return "Generic_Signal_Burst"
+
+    def _extract_real_actor(self, operation_log: OperationLog) -> str:
+        """Извлечение реального инициатора из контекста операции."""
+        if operation_log and hasattr(operation_log, "caller_info") and operation_log.caller_info:
+            return f"{operation_log.caller_info}"
+        return "base_signals.py:51"  # Fallback
+
+    def _calculate_temporal_characteristics(self, operations: List[SubOperationLog]) -> Dict[str, float]:
+        """Расчет временных характеристик бурста."""
         if not operations:
-            return "BaseSignals burst: 0 operations"
+            return {}
 
-        # Stage 3: Use utility functions for enhanced analysis
-        burst_type = determine_burst_type(operations)
-        temporal_chars = calculate_temporal_characteristics(operations)
-        target_dist = calculate_target_distribution(operations)
+        # Сортировка по времени
+        sorted_ops = sorted(operations, key=lambda op: op.start_time)
 
-        # Generate comprehensive summary
-        return generate_burst_summary(operations, burst_type, temporal_chars, target_dist)
+        # Основные метрики
+        total_duration = (sorted_ops[-1].start_time - sorted_ops[0].start_time) * 1000  # ms
+        avg_op_duration = sum(getattr(op, "execution_time", 0) or 0 for op in operations) / len(operations) * 1000
+
+        # Вычисление разрывов между операциями
+        gaps = [(sorted_ops[i].start_time - sorted_ops[i - 1].start_time) * 1000 for i in range(1, len(sorted_ops))]
+        max_gap = max(gaps) if gaps else 0.0
+
+        # Операций в секунду
+        ops_per_second = len(operations) / (total_duration / 1000) if total_duration > 0 else 0
+
+        return {
+            "total_duration_ms": total_duration,
+            "avg_operation_duration_ms": avg_op_duration,
+            "max_gap_ms": max_gap,
+            "operations_per_second": ops_per_second,
+        }
+
+    def _calculate_target_distribution(self, operations: List[SubOperationLog]) -> Dict[str, int]:
+        """Расчет распределения операций по targets."""
+        distribution = {}
+        for op in operations:
+            target = op.target
+            distribution[target] = distribution.get(target, 0) + 1
+        return distribution
+
+    def _generate_burst_summary(
+        self,
+        operations: List[SubOperationLog],
+        burst_type: str,
+        temporal_chars: Dict[str, float],
+        target_dist: Dict[str, int],
+    ) -> str:
+        """Генерация информативной сводки для BaseSignals бурста."""
+        op_count = len(operations)
+        duration_ms = temporal_chars.get("total_duration_ms", 0)
+
+        # Базовая информация
+        base_summary = f"{burst_type}: {op_count} operations in {duration_ms:.1f}ms"
+
+        # Дополнительная информация о targets
+        if len(target_dist) > 1:
+            targets_info = ", ".join([f"{target}({count})" for target, count in target_dist.items()])
+            base_summary += f" across {len(target_dist)} targets [{targets_info}]"
+
+        # Информация о производительности
+        ops_per_sec = temporal_chars.get("operations_per_second", 0)
+        if ops_per_sec > 100:
+            base_summary += f" ({ops_per_sec:.0f} ops/s)"
+
+        return base_summary
 
 
 class TimeWindowStrategy(MetaOperationStrategy):
