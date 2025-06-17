@@ -8,6 +8,7 @@ including strategy registration, parameter configuration, and factory methods.
 from typing import Any, Dict, List, Optional, Type
 
 from .detection_strategies import (
+    BaseSignalsBurstStrategy,
     NameSimilarityStrategy,
     SequenceCountStrategy,
     TargetClusterStrategy,
@@ -21,14 +22,14 @@ class MetaOperationConfig:
     Configuration manager for meta-operation detection strategies.
 
     This class handles registration of available strategies, configuration
-    of strategy parameters, and factory methods for creating detectors.
-    """  # Registry of available strategy classes
+    of strategy parameters, and factory methods for creating detectors."""  # Registry of available strategy classes
 
     STRATEGY_REGISTRY: Dict[str, Type[MetaOperationStrategy]] = {
         "time_window": TimeWindowStrategy,
         "name_similarity": NameSimilarityStrategy,
         "target_cluster": TargetClusterStrategy,
         "sequence_count": SequenceCountStrategy,
+        "base_signals_burst": BaseSignalsBurstStrategy,
     }  # Default configuration for each strategy
     DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "time_window": {
@@ -43,6 +44,11 @@ class MetaOperationConfig:
         },
         "sequence_count": {
             "min_sequence_length": 3,
+        },
+        "base_signals_burst": {
+            "window_ms": 100.0,
+            "min_cluster_size": 2,
+            "include_noise": True,
         },
     }
 

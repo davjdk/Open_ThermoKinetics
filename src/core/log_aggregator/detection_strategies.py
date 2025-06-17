@@ -375,3 +375,89 @@ class SequenceCountStrategy(MetaOperationStrategy):
             op_name = operations[0].operation_name or "unknown"
             return f"Sequence cluster ({op_name}): {len(operations)} operations"
         return f"Sequence cluster: {len(operations)} operations"
+
+
+class BaseSignalsBurstStrategy(MetaOperationStrategy):
+    """
+    Groups BaseSignals operations that occur in bursts with intermediate noise operations.
+
+    This strategy detects clusters of operations where:
+    1. Multiple operations target or originate from the base_signals dispatcher
+    2. Operations occur within a specified time window
+    3. Intermediate operations between base_signals operations are treated as "noise"
+
+    Based on analysis of base_signals.py structure:
+    - Operations with target="base_signals" (direct dispatcher operations)
+    - Operations where actor contains "base_signals" (dispatcher-initiated operations)
+    """
+
+    @property
+    def strategy_name(self) -> str:
+        return "BaseSignalsBurst"
+
+    def validate_config(self) -> None:
+        """Validate BaseSignalsBurst configuration."""
+        required_params = ["window_ms", "min_cluster_size"]
+        for param in required_params:
+            if param not in self.config:
+                raise ValueError(f"BaseSignalsBurstStrategy missing required parameter: {param}")
+
+        if self.config["window_ms"] <= 0:
+            raise ValueError("BaseSignalsBurstStrategy window_ms must be positive")
+
+        if self.config["min_cluster_size"] < 1:
+            raise ValueError("BaseSignalsBurstStrategy min_cluster_size must be >= 1")
+
+    def detect(self, sub_op: SubOperationLog, context: OperationLog) -> Optional[str]:
+        """
+        Detect if operation belongs to a BaseSignals burst cluster.
+
+        Args:
+            sub_op: The sub-operation to analyze
+            context: The full operation log for context
+
+        Returns:
+            Optional[str]: Meta-operation ID if clustered, None otherwise
+        """
+        # Stage 1: Only basic check for base_signals operations
+        if not self._is_base_signals_operation(sub_op):
+            return None
+        # TODO: Stage 2 - implement clustering logic with time windows and noise detection
+        return None
+
+    def _is_base_signals_operation(self, sub_op: SubOperationLog) -> bool:
+        """
+        Check if operation relates to base_signals dispatcher.
+
+        Based on base_signals.py analysis:
+        - target == "base_signals" - operations directed to dispatcher
+        - actor contains "base_signals" - operations initiated by dispatcher
+        """
+        target_check = sub_op.target == "base_signals"
+        actor_check = (
+            "base_signals" in str(sub_op.actor).lower() if hasattr(sub_op, "actor") and sub_op.actor else False
+        )
+
+        return target_check or actor_check
+
+    def get_meta_operation_description(self, meta_id: str, operations: List[SubOperationLog]) -> str:
+        """
+        Generate description for BaseSignals burst cluster.
+
+        Args:
+            meta_id: The meta-operation identifier
+            operations: List of operations in the cluster
+
+        Returns:
+            str: Human-readable description of the cluster
+        """
+        count = len(operations)
+        if not operations:
+            return f"BaseSignalsBurst: {count} операций"
+        # Calculate duration from first to last operation
+        duration_ms = 0
+        if operations and operations[0].start_time is not None and operations[-1].end_time is not None:
+            duration_ms = int((operations[-1].end_time - operations[0].start_time) * 1000)
+
+        # TODO: Stage 3 - add analysis of actors and noise operations
+        return f"BaseSignalsBurst: {count} операций, {duration_ms} мс"
