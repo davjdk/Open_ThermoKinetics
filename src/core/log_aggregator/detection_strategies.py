@@ -503,9 +503,7 @@ class NameSimilarityStrategy(MetaOperationStrategy):
             Optional[str]: Meta-operation ID if clustered, None otherwise
         """
         if not sub_op.operation_name:
-            return None
-
-        # Extract base operation name (remove prefixes/suffixes)
+            return None  # Extract base operation name (remove prefixes/suffixes)
         base_name = self._extract_base_name(sub_op.operation_name)
 
         # Find operations with similar names
@@ -522,17 +520,25 @@ class NameSimilarityStrategy(MetaOperationStrategy):
 
     def _extract_base_name(self, operation_name: str) -> str:
         """Extract base name from operation name."""
-        # Simple heuristic: take first part before underscore or use full name
+        # Convert OperationType to string if needed
+        if hasattr(operation_name, "value"):
+            operation_name = operation_name.value
+        elif not isinstance(operation_name, str):
+            operation_name = str(operation_name)  # Simple heuristic: take first part before underscore or use full name
         parts = operation_name.split("_")
         return parts[0] if parts else operation_name
 
-    def _are_names_similar(self, name1: str, name2: str) -> bool:
+    def _are_names_similar(self, name1, name2) -> bool:
         """Check if two operation names are similar."""
-        # Simple similarity: same base name or one contains the other
-        base1 = self._extract_base_name(name1)
-        base2 = self._extract_base_name(name2)
+        # Convert to string if needed (handle OperationType objects)
+        str_name1 = str(name1) if name1 is not None else ""
+        str_name2 = str(name2) if name2 is not None else ""
 
-        return base1 == base2 or base1 in name2 or base2 in name1
+        # Simple similarity: same base name or one contains the other
+        base1 = self._extract_base_name(str_name1)
+        base2 = self._extract_base_name(str_name2)
+
+        return base1 == base2 or base1 in str_name2 or base2 in str_name1
 
     def get_meta_operation_description(self, meta_id: str, operations: List[SubOperationLog]) -> str:
         """Generate description for name-similarity cluster."""

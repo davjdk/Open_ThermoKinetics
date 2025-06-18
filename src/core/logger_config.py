@@ -180,6 +180,16 @@ META_OPERATION_CONFIG = {
     "enabled": True,  # Global enable/disable flag
     "debug_mode": False,  # Detailed logging of meta-operation detection
     "strategies": {
+        "base_signals_burst": {
+            "enabled": True,
+            "config": {
+                "time_window_ms": 250.0,
+                "min_burst_size": 2,
+                "max_gap_ms": 125.0,
+                "max_duration_ms": 25.0,
+                "include_cross_target": True,
+            },
+        },
         "time_window": {"enabled": True, "config": {"time_window_ms": 50.0}},
         "target_cluster": {
             "enabled": True,
@@ -201,7 +211,8 @@ META_OPERATION_CONFIG = {
             "enabled": False,  # Disable for now
             "config": {"freq_threshold": 5, "freq_window_ms": 1000.0},
         },
-    },  # Formatting settings for meta-operations display
+    },
+    # Formatting settings for meta-operations display
     "formatting": {
         "group_meta_operations": True,  # Include grouping in output
         "compact_meta_view": True,  # Compact display

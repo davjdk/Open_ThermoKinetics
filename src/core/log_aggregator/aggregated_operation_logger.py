@@ -75,7 +75,15 @@ class AggregatedOperationLogger:
         # Initialize meta-operation detection
         from .meta_operation_config import get_default_detector
 
-        self._meta_detector = get_default_detector()  # Initialize the aggregated logger
+        self._meta_detector = get_default_detector()
+
+        # Log detector initialization info
+        if self._meta_detector:
+            strategy_names = [strategy.strategy_name for strategy in self._meta_detector.strategies]
+            self._main_logger.info(f"Meta-operation detector initialized with strategies: {strategy_names}")
+        else:
+            self._main_logger.warning("Meta-operation detector initialization failed or disabled")
+
         self._setup_aggregated_logger()
 
     def _load_formatting_config(self) -> None:

@@ -32,15 +32,13 @@ class MetaOperationConfig:
         "name_similarity": NameSimilarityStrategy,
         "target_cluster": TargetClusterStrategy,
         "sequence_count": SequenceCountStrategy,
-    }
-
-    # Default configuration for each strategy
+    }  # Default configuration for each strategy
     DEFAULT_CONFIG: Dict[str, Dict[str, Any]] = {
         "base_signals_burst": {
-            "time_window_ms": 100,
+            "time_window_ms": 250,
             "min_burst_size": 2,
-            "max_gap_ms": 50,
-            "max_duration_ms": 10.0,
+            "max_gap_ms": 125,
+            "max_duration_ms": 25.0,
             "include_cross_target": True,
         },
         "time_window": {
@@ -177,10 +175,10 @@ class MetaOperationConfig:
                     "name": "base_signals_burst",
                     "priority": 1,
                     "params": {
-                        "time_window_ms": 100,
+                        "time_window_ms": 250,
                         "min_burst_size": 2,
-                        "max_gap_ms": 50,
-                        "max_duration_ms": 10.0,
+                        "max_gap_ms": 125,
+                        "max_duration_ms": 25.0,
                         "include_cross_target": True,
                     },
                 },
@@ -461,10 +459,10 @@ DEFAULT_META_OPERATION_CONFIG.enable_strategy(
     "base_signals_burst",
     {
         "priority": 1,
-        "time_window_ms": 100,
+        "time_window_ms": 250,
         "min_burst_size": 2,
-        "max_gap_ms": 50,
-        "max_duration_ms": 10.0,
+        "max_gap_ms": 125,
+        "max_duration_ms": 25.0,
         "include_cross_target": True,
     },
 )
