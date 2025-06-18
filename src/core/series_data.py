@@ -3,7 +3,6 @@ from typing import Any, Optional
 
 from src.core.app_settings import MODEL_BASED_DIFFERENTIAL_EVOLUTION_DEFAULT_KWARGS, OperationType
 from src.core.base_signals import BaseSlots
-from src.core.log_aggregator import operation
 from src.core.logger_config import logger
 
 
@@ -128,7 +127,6 @@ class SeriesData(BaseSlots):
 
         self.series[series_name]["reaction_scheme"] = reaction_scheme
 
-    @operation("ADD_NEW_SERIES")
     def add_series(
         self,
         data: Any,
@@ -168,7 +166,6 @@ class SeriesData(BaseSlots):
 
         return True, name
 
-    @operation("UPDATE_SERIES")
     def update_series(self, series_name: str, update_data: dict) -> bool:
         series_entry = self.series.get(series_name)
         if not series_entry:
@@ -215,7 +212,6 @@ class SeriesData(BaseSlots):
             old_scheme["reactions"] = updated_reactions
         series_entry["reaction_scheme"] = old_scheme
 
-    @operation("DELETE_SERIES")
     def delete_series(self, series_name: str) -> bool:
         if series_name in self.series:
             del self.series[series_name]

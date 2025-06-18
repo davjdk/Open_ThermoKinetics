@@ -11,7 +11,6 @@ from src.core.calculation_data import CalculationsData
 from src.core.calculation_data_operations import CalculationsDataOperations
 from src.core.file_data import FileData
 from src.core.file_operations import ActiveFileOperations
-from src.core.log_aggregator import get_aggregated_logger
 from src.core.logger_config import LoggerManager
 from src.core.model_fit_calculation import ModelFitCalculation
 from src.core.model_free_calculation import ModelFreeCalculation
@@ -21,7 +20,6 @@ from src.gui.main_window import MainWindow
 
 def main():
     LoggerManager.configure_logging()
-    aggregated_logger = get_aggregated_logger()  # noqa: F841
 
     app = QApplication(sys.argv)
     signals = BaseSignals()

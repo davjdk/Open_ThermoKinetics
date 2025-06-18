@@ -9,7 +9,6 @@ from core.base_signals import BaseSlots
 from PyQt6.QtCore import pyqtSignal, pyqtSlot
 
 from src.core.app_settings import OperationType
-from src.core.log_aggregator import operation
 from src.core.logger_config import logger
 from src.core.logger_console import LoggerConsole as console
 
@@ -75,7 +74,6 @@ class FileData(BaseSlots):
         return False
 
     @pyqtSlot(tuple)
-    @operation("LOAD_FILE")
     def load_file(self, file_info):
         self.file_path, self.delimiter, self.skip_rows, columns_names = file_info
 
@@ -181,7 +179,6 @@ class FileData(BaseSlots):
         else:
             logger.error(f"Key '{key}' not found in dataframe_copies.")
 
-    @operation("RESET_FILE_DATA")
     def reset_dataframe_copy(self, key):
         if key in self.original_data:
             self.dataframe_copies[key] = self.original_data[key].copy()
@@ -190,7 +187,6 @@ class FileData(BaseSlots):
             logger.debug(f"Reset data for key '{key}' and cleared operations history.")
             console.log(f"\n\nData reset for '{key}'. Original state restored.")
 
-    @operation("DIFFERENTIAL")
     def modify_data(self, func, params):
         file_name = params.get("file_name")
         if not callable(func):
