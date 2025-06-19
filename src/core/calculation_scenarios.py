@@ -198,14 +198,23 @@ def model_based_objective_function(
     params, species_list, reactions, num_species, num_reactions, betas, all_exp_masses, exp_temperature, R, stop_event
 ):
     total_mse = 0.0
-    contributions = params[3 * num_reactions : 4 * num_reactions]
+    # Нормализуем вклады (contributions) - сумма должна равняться 1.0
+    raw_contributions = params[3 * num_reactions : 4 * num_reactions]
+    sum_contributions = np.sum(raw_contributions)
+
+    # Избегаем деления на ноль
+    if sum_contributions <= 0:
+        return float("inf")
+
+    normalized_contributions = raw_contributions / sum_contributions
+
     for beta, exp_mass in zip(betas, all_exp_masses):
         if stop_event.is_set():
             return float("inf")
 
         mse_i = integrate_ode_for_beta(
             beta,
-            contributions,
+            normalized_contributions,
             params,
             species_list,
             reactions,
@@ -510,18 +519,50 @@ class ModelBasedTargetFunction:
         if self.stop_event.is_set():
             return float("inf")
         try:
-            total_mse = model_based_objective_function(
-                params,
-                self.species_list,
-                self.reactions,
-                self.num_species,
-                self.num_reactions,
-                self.betas,
-                self.all_exp_masses,
-                self.exp_temperature,
-                self.R,
-                self.stop_event,
-            )
+            total_mse = 0.0
+            n = self.num_reactions
+
+            # Extract raw (unnormalized) contributions
+            raw_contrib = params[3 * n : 4 * n]
+
+            # Check chain-based contribution constraints for basinhopping
+            # Extract reaction chains from the current scheme
+            scheme = {"reactions": self.reactions, "components": [{"id": comp_id} for comp_id in self.species_list]}
+            chains = extract_chains(scheme)
+
+            # Check that sum of RAW contributions for each chain is within 0.01 of 1.0
+            TOLERANCE = 0.05
+            for chain in chains:
+                if len(chain) > 0:  # Skip empty chains
+                    chain_contrib_sum = np.sum(raw_contrib[chain])
+                    deviation = abs(chain_contrib_sum - 1.0)
+                    if deviation > TOLERANCE:
+                        # Apply penalty to guide optimizer away from invalid solutions
+                        penalty = 1e12 * (1 + deviation)  # Scale penalty with deviation size
+                        logger.debug(
+                            f"Chain contribution constraint violated: chain {chain}, "
+                            f"raw sum={chain_contrib_sum:.4f}, deviation={deviation:.4f}, penalty={penalty}"
+                        )
+                        return penalty
+
+            for beta_val, exp_mass in zip(self.betas, self.all_exp_masses):
+                if self.stop_event.is_set():
+                    return float("inf")
+
+                mse_i = integrate_ode_for_beta(
+                    beta_val,
+                    raw_contrib,
+                    params,
+                    self.species_list,
+                    self.reactions,
+                    self.num_species,
+                    self.num_reactions,
+                    self.exp_temperature,
+                    exp_mass,
+                    self.R,
+                )
+                total_mse += mse_i
+
             with self.lock:
                 if total_mse < self.best_mse.value:
                     self.best_mse.value = total_mse
