@@ -730,3 +730,37 @@ NUC_MODELS_TABLE = {
 }
 
 NUC_MODELS_LIST = sorted(NUC_MODELS_TABLE.keys())
+
+# BatchTakeStep configuration constants
+DEFAULT_BATCH_SIZE = 4
+MIN_BATCH_SIZE = 2
+MAX_BATCH_SIZE = 16
+DEFAULT_STEPSIZE = 0.5
+MIN_STEPSIZE = 0.01
+MAX_STEPSIZE = 2.0
+
+# Basinhopping optimization parameters (full configuration)
+DEFAULT_BASINHOPPING_PARAMS = {
+    "optimization_method": "differential_evolution",  # Backward compatibility
+    "T": 1.0,  # Metropolis temperature
+    "niter": 100,  # Number of iterations
+    "stepsize": 0.5,  # BatchTakeStep step size
+    "batch_size": 4,  # Batch size (will be adapted to CPU)
+    "minimizer_method": "L-BFGS-B",  # Local optimizer
+}
+
+# Validation ranges for UI (will be used in Stage 3)
+BASINHOPPING_PARAM_RANGES = {
+    "T": (0.1, 10.0),
+    "niter": (10, 1000),
+    "stepsize": (0.01, 2.0),
+    "batch_size": (2, 16),
+}
+
+# Supported local minimizers for basinhopping
+BASINHOPPING_MINIMIZERS = [
+    "L-BFGS-B",  # Bounded optimization (recommended)
+    "SLSQP",  # Sequential Least Squares Programming
+    "TNC",  # Truncated Newton
+    "trust-constr",  # Trust region with constraints
+]
