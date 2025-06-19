@@ -3,6 +3,8 @@ Series management and calculation settings dialogs.
 Contains dialogs for configuring calculation parameters and model selection.
 """
 
+import os
+
 from PyQt6.QtCore import Qt
 from PyQt6.QtWidgets import (
     QAbstractItemView,
@@ -10,6 +12,7 @@ from PyQt6.QtWidgets import (
     QComboBox,
     QDialog,
     QDialogButtonBox,
+    QDoubleSpinBox,
     QFormLayout,
     QGridLayout,
     QGroupBox,
@@ -19,13 +22,14 @@ from PyQt6.QtWidgets import (
     QMessageBox,
     QPushButton,
     QScrollArea,
+    QSpinBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
     QWidget,
 )
 
-from src.core.app_settings import NUC_MODELS_LIST
+from src.core.app_settings import BASINHOPPING_MINIMIZERS, BASINHOPPING_PARAM_RANGES, NUC_MODELS_LIST
 
 
 class CalculationSettingsDialog(QDialog):
@@ -69,25 +73,29 @@ class CalculationSettingsDialog(QDialog):
     def _create_left_panel(self):
         """Create left panel with method configuration."""
         left_widget = QWidget()
-        left_layout = QVBoxLayout(left_widget)
-
-        # Method selection
+        left_layout = QVBoxLayout(left_widget)  # Method selection
         method_label = QLabel("Calculation method:")
         self.calculation_method_combo = QComboBox()
-        self.calculation_method_combo.addItems(["differential_evolution", "another_method"])
+        self.calculation_method_combo.addItems(["differential_evolution", "basinhopping"])
         self.calculation_method_combo.setCurrentText("differential_evolution")
         self.calculation_method_combo.currentTextChanged.connect(self.update_method_parameters)
 
         left_layout.addWidget(method_label)
-        left_layout.addWidget(self.calculation_method_combo)
-
-        # Differential evolution settings
+        left_layout.addWidget(self.calculation_method_combo)  # Differential evolution settings
         self.de_group = QGroupBox("Differential Evolution Settings")
         self.de_layout = QFormLayout()
         self.de_group.setLayout(self.de_layout)
         left_layout.addWidget(self.de_group, stretch=0)
 
         self._setup_de_parameters()
+
+        # Basin-hopping settings
+        self.basinhopping_group = QGroupBox("Basin-Hopping Parameters")
+        self.basinhopping_layout = QFormLayout()
+        self.basinhopping_group.setLayout(self.basinhopping_layout)
+        left_layout.addWidget(self.basinhopping_group, stretch=0)
+
+        self._setup_basinhopping_parameters()
         left_layout.addStretch(1)
 
         return left_widget
@@ -255,9 +263,20 @@ class CalculationSettingsDialog(QDialog):
     def update_method_parameters(self):
         """Update parameter visibility based on selected method."""
         selected_method = self.calculation_method_combo.currentText()
-        self.de_group.setVisible(selected_method == "differential_evolution")
 
-    def get_data(self):
+        # Show only the relevant parameter group
+        if selected_method == "differential_evolution":
+            self.de_group.setVisible(True)
+            self.basinhopping_group.setVisible(False)
+        elif selected_method == "basinhopping":
+            self.de_group.setVisible(False)
+            self.basinhopping_group.setVisible(True)
+        else:
+            # Default to DE if unknown method
+            self.de_group.setVisible(True)
+            self.basinhopping_group.setVisible(False)
+
+    def get_data(self):  # noqa: C901
         """Get dialog data - calculation settings and updated reactions."""
         selected_method = self.calculation_method_combo.currentText()
         errors = []
@@ -279,11 +298,26 @@ class CalculationSettingsDialog(QDialog):
                 if not is_valid:
                     errors.append(f"Parameter '{key}': {error_msg}")
                 method_params[key] = value
+        elif selected_method == "basinhopping":
+            for key, widget in self.basinhopping_params_edits.items():
+                if isinstance(widget, QComboBox):
+                    value = widget.currentText()
+                elif isinstance(widget, QDoubleSpinBox):
+                    value = widget.value()
+                elif isinstance(widget, QSpinBox):
+                    value = widget.value()
+                else:
+                    value = widget.value()
+
+                is_valid, error_msg = self.validate_basinhopping_parameter(key, value)
+                if not is_valid:
+                    errors.append(f"Basinhopping parameter '{key}': {error_msg}")
+                method_params[key] = value
         else:
-            method_params = {"info": "No additional params set for another_method"}
+            method_params = {"info": "No additional params set for unknown method"}
 
         if errors:
-            QMessageBox.warning(self, "Invalid DE parameters", "\n".join(errors))
+            QMessageBox.warning(self, "Invalid parameters", "\n".join(errors))
             return None, None
 
         # Collect updated reaction data
@@ -375,6 +409,91 @@ class CalculationSettingsDialog(QDialog):
             return False, "Must be a positive integer"
         if param_name == "workers" and (not isinstance(value, int) or value < 1):
             return False, "Must be an integer >= 1"
+        return True, ""
+
+    def _setup_basinhopping_parameters(self):
+        """Setup basin-hopping parameter inputs."""
+        # Default basinhopping parameters
+        default_basinhopping_params = {
+            "T": 1.0,
+            "niter": 100,
+            "stepsize": 0.5,
+            "batch_size": min(4, os.cpu_count() or 4),
+            "minimizer_method": "L-BFGS-B",
+        }
+
+        self.basinhopping_params_edits = {}
+
+        # Temperature parameter (T)
+        self.temperature_spin = QDoubleSpinBox()
+        t_range = BASINHOPPING_PARAM_RANGES["T"]
+        self.temperature_spin.setRange(t_range[0], t_range[1])
+        self.temperature_spin.setValue(default_basinhopping_params["T"])
+        self.temperature_spin.setSingleStep(0.1)
+        self.temperature_spin.setDecimals(2)
+        self.temperature_spin.setToolTip("Temperature parameter for acceptance probability")
+        self.basinhopping_params_edits["T"] = self.temperature_spin
+        self.basinhopping_layout.addRow("Temperature (T):", self.temperature_spin)
+
+        # Number of iterations (niter)
+        self.niter_spin = QSpinBox()
+        niter_range = BASINHOPPING_PARAM_RANGES["niter"]
+        self.niter_spin.setRange(niter_range[0], niter_range[1])
+        self.niter_spin.setValue(default_basinhopping_params["niter"])
+        self.niter_spin.setToolTip("Number of basin-hopping iterations")
+        self.basinhopping_params_edits["niter"] = self.niter_spin
+        self.basinhopping_layout.addRow("Iterations (niter):", self.niter_spin)
+
+        # Step size (stepsize)
+        self.stepsize_spin = QDoubleSpinBox()
+        stepsize_range = BASINHOPPING_PARAM_RANGES["stepsize"]
+        self.stepsize_spin.setRange(stepsize_range[0], stepsize_range[1])
+        self.stepsize_spin.setValue(default_basinhopping_params["stepsize"])
+        self.stepsize_spin.setSingleStep(0.01)
+        self.stepsize_spin.setDecimals(3)
+        self.stepsize_spin.setToolTip("Step size for random displacement")
+        self.basinhopping_params_edits["stepsize"] = self.stepsize_spin
+        self.basinhopping_layout.addRow("Step Size:", self.stepsize_spin)
+
+        # Batch size for Batch-Stepper (batch_size)
+        self.batch_size_spin = QSpinBox()
+        batch_range = BASINHOPPING_PARAM_RANGES["batch_size"]
+        self.batch_size_spin.setRange(batch_range[0], min(batch_range[1], os.cpu_count() or 4))
+        self.batch_size_spin.setValue(default_basinhopping_params["batch_size"])
+        self.batch_size_spin.setToolTip("Batch size for parallel step evaluation")
+        self.basinhopping_params_edits["batch_size"] = self.batch_size_spin
+        self.basinhopping_layout.addRow("Batch Size:", self.batch_size_spin)
+
+        # Local minimizer method (minimizer_method)
+        self.minimizer_combo = QComboBox()
+        self.minimizer_combo.addItems(BASINHOPPING_MINIMIZERS)
+        self.minimizer_combo.setCurrentText(default_basinhopping_params["minimizer_method"])
+        self.minimizer_combo.setToolTip("Local minimizer method for each basin")
+        self.basinhopping_params_edits["minimizer_method"] = self.minimizer_combo
+        self.basinhopping_layout.addRow("Local Minimizer:", self.minimizer_combo)
+
+    def validate_basinhopping_parameter(self, param_name, value):  # noqa: C901
+        """Validate basinhopping parameter value."""
+        if param_name == "T":
+            t_range = BASINHOPPING_PARAM_RANGES["T"]
+            if not (t_range[0] <= value <= t_range[1]):
+                return False, f"Must be between {t_range[0]} and {t_range[1]}"
+        elif param_name == "niter":
+            niter_range = BASINHOPPING_PARAM_RANGES["niter"]
+            if not (niter_range[0] <= value <= niter_range[1]):
+                return False, f"Must be between {niter_range[0]} and {niter_range[1]}"
+        elif param_name == "stepsize":
+            stepsize_range = BASINHOPPING_PARAM_RANGES["stepsize"]
+            if not (stepsize_range[0] <= value <= stepsize_range[1]):
+                return False, f"Must be between {stepsize_range[0]} and {stepsize_range[1]}"
+        elif param_name == "batch_size":
+            batch_range = BASINHOPPING_PARAM_RANGES["batch_size"]
+            max_cpus = os.cpu_count() or 4
+            if not (batch_range[0] <= value <= min(batch_range[1], max_cpus)):
+                return False, f"Must be between {batch_range[0]} and {min(batch_range[1], max_cpus)}"
+        elif param_name == "minimizer_method":
+            if value not in BASINHOPPING_MINIMIZERS:
+                return False, f"Must be one of {BASINHOPPING_MINIMIZERS}"
         return True, ""
 
 
