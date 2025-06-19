@@ -3,6 +3,40 @@ from enum import Enum
 import numpy as np
 from numba import njit
 
+# BatchTakeStep configuration
+DEFAULT_BATCH_SIZE = 4
+MIN_BATCH_SIZE = 2
+MAX_BATCH_SIZE = 16
+DEFAULT_STEPSIZE = 0.5
+MIN_STEPSIZE = 0.01
+MAX_STEPSIZE = 2.0
+
+# Basinhopping optimization parameters (полная конфигурация)
+DEFAULT_BASINHOPPING_PARAMS = {
+    "optimization_method": "differential_evolution",  # Backward compatibility
+    "T": 1.0,  # Температура Метрополиса
+    "niter": 100,  # Количество итераций
+    "stepsize": 0.5,  # Размер шага BatchTakeStep
+    "batch_size": 4,  # Размер batch (будет адаптирован к CPU)
+    "minimizer_method": "L-BFGS-B",  # Локальный оптимизатор
+}
+
+# Validation ranges для UI (будет использоваться в Этапе 3)
+BASINHOPPING_PARAM_RANGES = {
+    "T": (0.1, 10.0),
+    "niter": (10, 1000),
+    "stepsize": (0.01, 2.0),
+    "batch_size": (2, 16),
+}
+
+# Supported local minimizers for basinhopping
+BASINHOPPING_MINIMIZERS = [
+    "L-BFGS-B",  # Bounded optimization (recommended)
+    "SLSQP",  # Sequential Least Squares Programming
+    "TNC",  # Truncated Newton
+    "trust-constr",  # Trust region with constraints
+]
+
 
 class OperationType(Enum):
     ADD_REACTION = "add_reaction"
