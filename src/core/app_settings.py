@@ -37,6 +37,16 @@ BASINHOPPING_MINIMIZERS = [
     "trust-constr",  # Trust region with constraints
 ]
 
+# Constraints поддержка для basinhopping
+BASINHOPPING_CONSTRAINT_METHODS = ["SLSQP", "trust-constr"]  # Методы с поддержкой constraints
+
+# Performance настройки
+BASINHOPPING_PERFORMANCE_CONFIG = {
+    "adaptive_batch_sizing": True,  # Автоматическая адаптация batch_size к CPU
+    "memory_limit_mb": 512,  # Ограничение памяти для batch операций
+    "timeout_seconds": None,  # Timeout для individual evaluations
+}
+
 
 class OperationType(Enum):
     ADD_REACTION = "add_reaction"

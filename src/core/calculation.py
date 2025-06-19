@@ -173,7 +173,6 @@ class Calculations(BaseSlots):
             target_function = scenario_instance.get_target_function(calculations_instance=self)
             optimization_method = scenario_instance.get_optimization_method()
             strategy_type = scenario_instance.get_result_strategy_type()
-
             self.set_result_strategy(strategy_type)
 
             if optimization_method == "differential_evolution":
@@ -184,6 +183,12 @@ class Calculations(BaseSlots):
                     calc_params["callback"] = make_de_callback(target_function, self)
 
                 self.start_differential_evolution(bounds=bounds, target_function=target_function, **calc_params)
+            elif optimization_method == "basinhopping" and scenario_key == "model_based_calculation":
+                # New basinhopping support for ModelBasedScenario
+                calc_params = params.get("calculation_settings", {}).get("method_parameters", {}).copy()
+
+                # Use ModelBasedScenario's new run method for basinhopping
+                self.start_basinhopping(scenario_instance, bounds, target_function, calc_params)
             else:
                 logger.error(f"Unsupported optimization method: {optimization_method}")
 
@@ -262,6 +267,31 @@ class Calculations(BaseSlots):
                 bounds=bounds,
                 **kwargs,
             )
+
+    def start_basinhopping(self, scenario_instance, bounds, target_function, calc_params):
+        """
+        Start basinhopping optimization for ModelBasedScenario.
+
+        Args:
+            scenario_instance: ModelBasedScenario instance
+            bounds: Parameter bounds
+            target_function: Target function to optimize
+            calc_params: Optimization parameters
+        """
+        try:
+            logger.info("Starting basinhopping optimization")
+
+            # Use scenario's run method with basinhopping
+            result = scenario_instance.run(
+                target_func=target_function, bounds=bounds, method_params=calc_params, stop_event=self.stop_event
+            )
+
+            # Handle the result
+            self._calculation_finished(result)
+
+        except Exception as e:
+            logger.error(f"Error in basinhopping optimization: {e}")
+            self._calculation_finished(e)
 
     @pyqtSlot(object)
     def _calculation_finished(self, result):

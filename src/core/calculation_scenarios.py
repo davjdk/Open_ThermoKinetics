@@ -7,6 +7,7 @@ from scipy.integrate import solve_ivp
 from scipy.optimize import NonlinearConstraint
 
 from src.core.app_settings import NUC_MODELS_TABLE
+from src.core.batch_take_step import BatchTakeStep
 from src.core.curve_fitting import CurveFitting as cft
 from src.core.logger_config import logger
 
@@ -216,7 +217,153 @@ class ModelBasedScenario(BaseCalculationScenario):
         return "model_based_calculation"
 
     def get_optimization_method(self) -> str:
-        return self.params.get("calculation_settings", {}).get("method", "differential_evolution")
+        calc_settings = self.params.get("calculation_settings", {})
+        method_params = calc_settings.get("method_parameters", {})
+        return method_params.get("optimization_method", "differential_evolution")
+
+    def run(self, target_func, bounds, method_params, stop_event):
+        """
+        Main optimization method with algorithm selection
+
+        Supported methods:
+        - "differential_evolution" (default, existing)
+        - "basinhopping" (new, with BatchTakeStep)
+        """
+        method = method_params.get("optimization_method", "differential_evolution")
+
+        if method == "differential_evolution":
+            # Existing code without changes
+            return self._run_differential_evolution(target_func, bounds, method_params, stop_event)
+        elif method == "basinhopping":
+            # New method with BatchTakeStep
+            return self._run_basinhopping(target_func, bounds, method_params, stop_event)
+        else:
+            raise ValueError(f"Unsupported optimization method: {method}")
+
+    def _run_differential_evolution(self, target_func, bounds, method_params, stop_event):
+        """
+        Existing differential_evolution implementation
+
+        This method preserves backward compatibility with existing functionality.
+        """
+        from scipy.optimize import differential_evolution
+
+        # Remove optimization_method from method_params for scipy compatibility
+        de_params = method_params.copy()
+        de_params.pop("optimization_method", None)
+
+        # Set callback if available
+        callback = de_params.pop("callback", None)
+
+        return differential_evolution(func=target_func, bounds=bounds, callback=callback, **de_params)
+
+    def _run_basinhopping(self, target_func, bounds, method_params, stop_event):
+        """
+        Run basinhopping optimization with Batch-Stepper parallelization
+
+        Args:
+            target_func: ModelBasedTargetFunction instance
+            bounds: Parameter bounds for optimization
+            method_params: Basinhopping parameters from UI
+            stop_event: Event for interrupting calculations
+
+        Returns:
+            scipy.optimize.OptimizeResult with optimization results
+        """
+        import os
+
+        from scipy.optimize import basinhopping
+
+        from src.core.app_settings import DEFAULT_BASINHOPPING_PARAMS
+
+        # Extract basinhopping parameters with defaults
+        T = method_params.get("T", DEFAULT_BASINHOPPING_PARAMS["T"])
+        niter = method_params.get("niter", DEFAULT_BASINHOPPING_PARAMS["niter"])
+        stepsize = method_params.get("stepsize", DEFAULT_BASINHOPPING_PARAMS["stepsize"])
+        batch_size = method_params.get("batch_size", DEFAULT_BASINHOPPING_PARAMS["batch_size"])
+
+        # Adaptive batch sizing
+        if method_params.get("adaptive_batch_sizing", True):
+            batch_size = min(batch_size, os.cpu_count() or 4)
+
+        # Create initial guess (center of bounds)
+        x0 = np.array([(lb + ub) / 2 for lb, ub in bounds])
+
+        # Create BatchTakeStep stepper
+        batch_stepper = self._create_batch_stepper(method_params, target_func, stop_event, bounds, stepsize, batch_size)
+
+        # Setup minimizer kwargs
+        minimizer_kwargs = self._setup_minimizer_kwargs(bounds, method_params)
+        # Create progress callback
+        callback = self._create_progress_callback(stop_event, target_func)
+
+        try:
+            # Run basinhopping with BatchTakeStep
+            result = basinhopping(
+                func=target_func,
+                x0=x0,
+                niter=niter,
+                T=T,
+                take_step=batch_stepper,
+                minimizer_kwargs=minimizer_kwargs,
+                callback=callback,
+            )
+
+            logger.info(
+                f"Basinhopping completed. Success: {result.success}, "
+                f"Function evaluations: {result.nfev}, Final MSE: {result.fun}"
+            )
+
+            return result
+
+        except Exception as e:
+            logger.error(f"Basinhopping optimization failed: {e}")
+            raise
+        finally:
+            # Cleanup BatchTakeStep resources
+            try:
+                batch_stepper.shutdown()
+            except Exception as e:
+                logger.warning(f"Error during BatchTakeStep cleanup: {e}")
+
+    def _create_batch_stepper(self, method_params, target_func, stop_event, bounds, stepsize, batch_size):
+        """Create and configure BatchTakeStep instance"""
+        return BatchTakeStep(
+            batch_size=batch_size,
+            target_func=target_func,
+            stepsize=stepsize,
+            stop_event=stop_event,
+            seed=method_params.get("seed", None),
+            timeout=method_params.get("timeout", None),
+        )
+
+    def _create_progress_callback(self, stop_event, target_func):
+        """Create callback for progress tracking and stopping"""
+        # Use specialized basinhopping callback with Qt signals integration
+        return make_basinhopping_callback(target_func, self.calculations)
+
+    def _setup_minimizer_kwargs(self, bounds, method_params):
+        """Setup local minimizer parameters"""
+        from src.core.app_settings import BASINHOPPING_MINIMIZERS
+
+        minimizer_method = method_params.get("minimizer_method", "L-BFGS-B")
+
+        # Validate minimizer method
+        if minimizer_method not in BASINHOPPING_MINIMIZERS:
+            logger.warning(f"Unknown minimizer method: {minimizer_method}. Using L-BFGS-B.")
+            minimizer_method = "L-BFGS-B"
+
+        minimizer_kwargs = {
+            "method": minimizer_method,
+            "bounds": bounds,
+        }
+
+        # Add additional options if specified
+        minimizer_options = method_params.get("minimizer_options", {})
+        if minimizer_options:
+            minimizer_kwargs["options"] = minimizer_options
+
+        return minimizer_kwargs
 
     def get_bounds(self) -> list[tuple]:
         scheme = self.params.get("reaction_scheme")
@@ -371,6 +518,37 @@ def make_de_callback(target_obj, calculations_instance):
     def callback(x, convergence):
         if calculations_instance.stop_event.is_set():
             return True
+        best_mse = target_obj.best_mse.value
+        best_params = list(target_obj.best_params)
+        calculations_instance.new_best_result.emit(
+            {
+                "best_mse": best_mse,
+                "params": best_params,
+            }
+        )
+        return False
+
+    return callback
+
+
+def make_basinhopping_callback(target_obj, calculations_instance):
+    """
+    Create callback for basinhopping optimization with Qt signals integration
+
+    Args:
+        target_obj: ModelBasedTargetFunction instance with shared state
+        calculations_instance: Calculations instance for emitting signals
+
+    Returns:
+        Callback function for basinhopping
+    """
+
+    def callback(x, f, accept):
+        # Check stop event for interruption
+        if calculations_instance.stop_event.is_set():
+            return True  # Stop basinhopping
+
+        # Emit best result update for GUI
         best_mse = target_obj.best_mse.value
         best_params = list(target_obj.best_params)
         calculations_instance.new_best_result.emit(
