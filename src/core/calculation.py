@@ -95,7 +95,6 @@ class Calculations(BaseSlots):
             target_function = scenario_instance.get_target_function(calculations_instance=self)
             optimization_method = scenario_instance.get_optimization_method()
             strategy_type = scenario_instance.get_result_strategy_type()
-
             self.set_result_strategy(strategy_type)
 
             if optimization_method == "differential_evolution":
@@ -106,6 +105,12 @@ class Calculations(BaseSlots):
                     calc_params["callback"] = make_de_callback(target_function, self)
 
                 self.start_differential_evolution(bounds=bounds, target_function=target_function, **calc_params)
+            elif optimization_method == "basinhopping":
+                # Handle basinhopping optimization through scenario's run method
+                method_params = params.get("calculation_settings", {})
+                self.start_calculation_thread(
+                    scenario_instance.run, target_function, bounds, method_params, self.stop_event
+                )
             else:
                 logger.error(f"Unsupported optimization method: {optimization_method}")
 

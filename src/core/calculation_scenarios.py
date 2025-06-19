@@ -1,12 +1,14 @@
+import os
 from multiprocessing import Manager
 from typing import Callable, Dict
 
 import numpy as np
 from scipy.constants import R
 from scipy.integrate import solve_ivp
-from scipy.optimize import NonlinearConstraint
+from scipy.optimize import NonlinearConstraint, basinhopping
 
-from src.core.app_settings import NUC_MODELS_TABLE
+from src.core.app_settings import BASINHOPPING_CONSTRAINT_METHODS, DEFAULT_BASINHOPPING_PARAMS, NUC_MODELS_TABLE
+from src.core.batch_take_step import BatchTakeStep
 from src.core.curve_fitting import CurveFitting as cft
 from src.core.logger_config import logger
 
@@ -33,6 +35,10 @@ class BaseCalculationScenario:
 
 
 class DeconvolutionScenario(BaseCalculationScenario):
+    def __init__(self, params: Dict, calculations):
+        super().__init__(params, calculations)
+        self.iteration_counter = 0
+
     def get_bounds(self) -> list[tuple]:
         return self.params["bounds"]
 
@@ -89,12 +95,14 @@ class DeconvolutionScenario(BaseCalculationScenario):
                 if mse < best_mse:
                     best_mse = mse
                     best_combination = combination
+                    self.iteration_counter += 1
                     self.calculations.new_best_result.emit(
                         {
                             "best_mse": best_mse,
                             "best_combination": best_combination,
                             "params": params_array,
                             "reaction_variables": reaction_variables,
+                            "iteration": self.iteration_counter,
                         }
                     )
             return best_mse
@@ -212,6 +220,10 @@ def model_based_objective_function(
 
 
 class ModelBasedScenario(BaseCalculationScenario):
+    def __init__(self, params: Dict, calculations):
+        super().__init__(params, calculations)
+        self.iteration_counter = 0
+
     def get_result_strategy_type(self) -> str:
         return "model_based_calculation"
 
@@ -311,6 +323,160 @@ class ModelBasedScenario(BaseCalculationScenario):
             stop_event=self.calculations.stop_event,
         )
 
+    def run(self, target_func, bounds, method_params, stop_event):
+        """
+        Main method for running optimization with algorithm selection.
+
+        Supports:
+        - 'differential_evolution' (existing, default)
+        - 'basinhopping' (new, with BatchTakeStep)
+        """
+        method = method_params.get("method", "differential_evolution")
+
+        if method == "differential_evolution":  # For differential_evolution, delegate to Calculations class
+            # This method should not be called for differential_evolution
+            # because Calculations handles it directly
+            logger.warning("run() called for differential_evolution - should be handled by Calculations class")
+            raise NotImplementedError(
+                "Differential evolution should be handled by Calculations.start_differential_evolution()"
+            )
+        elif method == "basinhopping":
+            # New basinhopping path with BatchTakeStep
+            return self._run_basinhopping(target_func, bounds, method_params, stop_event)
+        else:
+            raise ValueError(f"Unsupported optimization method: {method}")
+
+    def _run_basinhopping(self, target_func, bounds, method_params, stop_event):
+        """
+        Run basinhopping optimization with Batch-Stepper parallelization.
+
+        Args:
+            target_func: ModelBasedTargetFunction instance
+            bounds: Parameter bounds for optimization
+            method_params: Basinhopping parameters from UI
+            stop_event: Event for computation interruption
+
+        Returns:
+            scipy.optimize.OptimizeResult with optimization results
+        """
+        # Extract basinhopping parameters
+        basinhopping_params = method_params.get("method_parameters", {}).copy()
+
+        # Set default values from DEFAULT_BASINHOPPING_PARAMS
+        for key, default_value in DEFAULT_BASINHOPPING_PARAMS.items():
+            if key not in basinhopping_params:
+                basinhopping_params[key] = default_value
+
+        # Create BatchTakeStep instance
+        batch_stepper = self._create_batch_stepper(basinhopping_params, target_func, stop_event)
+
+        # Setup progress callback
+        progress_callback = self._create_progress_callback(stop_event)
+
+        # Setup minimizer_kwargs with bounds
+        minimizer_kwargs = self._setup_minimizer_kwargs(bounds, basinhopping_params)
+
+        # Generate initial guess (center of bounds)
+        x0 = np.array([(lb + ub) / 2.0 for lb, ub in bounds])
+
+        try:
+            # Run basinhopping optimization
+            result = basinhopping(
+                func=target_func,
+                x0=x0,
+                niter=basinhopping_params["niter"],
+                T=basinhopping_params["T"],
+                take_step=batch_stepper,
+                minimizer_kwargs=minimizer_kwargs,
+                callback=progress_callback,
+                interval=basinhopping_params.get("interval", 50),
+                disp=basinhopping_params.get("disp", True),
+                niter_success=basinhopping_params.get("niter_success"),
+                seed=basinhopping_params.get("seed"),
+            )
+
+            logger.info(f"Basinhopping completed: success={result.success}, " f"nit={result.nit}, fun={result.fun}")
+            return result
+
+        except Exception as e:
+            logger.error(f"Error in basinhopping optimization: {e}")
+            raise
+        finally:
+            # Cleanup BatchTakeStep resources
+            batch_stepper.shutdown()
+
+    def _create_batch_stepper(self, method_params, target_func, stop_event):
+        """Create and configure BatchTakeStep instance."""
+        # Determine batch_size
+        batch_size = method_params.get("batch_size")
+        if batch_size is None:
+            # Auto-detect based on CPU count
+            cpu_count = os.cpu_count() or 1
+            batch_size = min(4, cpu_count)
+
+        stepsize = method_params.get("stepsize", 0.5)
+
+        # Create BatchTakeStep instance
+        batch_stepper = BatchTakeStep(
+            batch_size=batch_size,
+            target_func=target_func,
+            stepsize=stepsize,
+            max_workers=batch_size,
+            stop_event=stop_event,
+            random_seed=method_params.get("seed"),
+        )
+
+        logger.info(f"Created BatchTakeStep: batch_size={batch_size}, stepsize={stepsize}")
+        return batch_stepper
+
+    def _create_progress_callback(self, stop_event):
+        """Create callback for progress tracking and stopping."""
+
+        def callback(x, f, accept):
+            # Check stop event
+            if stop_event.is_set():
+                logger.info("Basinhopping stopped by user request")
+                return True
+
+            # Increment iteration counter
+            self.iteration_counter += 1
+
+            # Emit progress signal through calculations instance
+            self.calculations.new_best_result.emit(
+                {
+                    "best_mse": f,
+                    "params": x.tolist(),
+                    "iteration": self.iteration_counter,
+                }
+            )
+
+            return False
+
+        return callback
+
+    def _setup_minimizer_kwargs(self, bounds, method_params):
+        """Setup parameters for local minimizer."""
+        minimizer_kwargs = method_params.get("minimizer_kwargs", {}).copy()
+
+        # Set default method if not specified
+        if "method" not in minimizer_kwargs:
+            minimizer_kwargs["method"] = "L-BFGS-B"
+
+        # Add bounds for bound-supporting methods
+        method = minimizer_kwargs["method"]
+        if method in ["L-BFGS-B", "TNC", "SLSQP"]:
+            minimizer_kwargs["bounds"] = bounds
+
+        # Add constraints for constraint-supporting methods
+        if method in BASINHOPPING_CONSTRAINT_METHODS:
+            constraints = self.get_constraints()
+            if constraints:
+                minimizer_kwargs["constraints"] = constraints  # Set default options
+        if "options" not in minimizer_kwargs:
+            minimizer_kwargs["options"] = {"maxiter": 100}
+
+        return minimizer_kwargs
+
 
 class ModelBasedTargetFunction:
     def __init__(
@@ -368,15 +534,20 @@ class ModelBasedTargetFunction:
 
 
 def make_de_callback(target_obj, calculations_instance):
+    iteration_counter = [0]  # Use list to make it mutable in nested function
+
     def callback(x, convergence):
         if calculations_instance.stop_event.is_set():
             return True
+
+        iteration_counter[0] += 1
         best_mse = target_obj.best_mse.value
         best_params = list(target_obj.best_params)
         calculations_instance.new_best_result.emit(
             {
                 "best_mse": best_mse,
                 "params": best_params,
+                "iteration": iteration_counter[0],
             }
         )
         return False

@@ -739,14 +739,33 @@ DEFAULT_STEPSIZE = 0.5
 MIN_STEPSIZE = 0.01
 MAX_STEPSIZE = 2.0
 
-# Basinhopping optimization parameters (full configuration)
+# Basinhopping optimization configuration
 DEFAULT_BASINHOPPING_PARAMS = {
-    "optimization_method": "differential_evolution",  # Backward compatibility
-    "T": 1.0,  # Metropolis temperature
-    "niter": 100,  # Number of iterations
-    "stepsize": 0.5,  # BatchTakeStep step size
-    "batch_size": 4,  # Batch size (will be adapted to CPU)
-    "minimizer_method": "L-BFGS-B",  # Local optimizer
+    "niter": 100,  # Number of basinhopping iterations
+    "T": 1.0,  # Temperature for Metropolis criterion
+    "stepsize": 0.5,  # Step size for BatchTakeStep
+    "batch_size": None,  # Auto-detect based on CPU count
+    "minimizer_kwargs": {
+        "method": "L-BFGS-B",  # Local minimizer
+        "options": {"maxiter": 100},  # Local optimizer iterations
+    },
+    "take_step": None,  # Will be set to BatchTakeStep instance
+    "accept_test": None,  # Default Metropolis criterion
+    "callback": None,  # Will be set to progress callback
+    "interval": 50,  # Callback interval
+    "disp": True,  # Display convergence info
+    "niter_success": None,  # Stop after this many successful iterations
+    "seed": None,  # Random seed
+}
+
+# Constraints support for basinhopping
+BASINHOPPING_CONSTRAINT_METHODS = ["SLSQP", "trust-constr"]  # Methods with constraints support
+
+# Performance configuration
+BASINHOPPING_PERFORMANCE_CONFIG = {
+    "adaptive_batch_sizing": True,  # Automatic batch_size adaptation to CPU
+    "memory_limit_mb": 512,  # Memory limit for batch operations
+    "timeout_seconds": None,  # Timeout for individual evaluations
 }
 
 # Validation ranges for UI (will be used in Stage 3)

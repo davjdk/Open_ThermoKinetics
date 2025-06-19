@@ -105,8 +105,15 @@ class ModelBasedCalculationStrategy(BestResultStrategy):
             params = result.get("params") or result.get("parameters")
 
             # Validate input parameters
-            if best_mse is None or params is None:
-                logger.error(f"Missing best_mse or params in result. Keys: {list(result.keys())}")
+            if best_mse is None:
+                logger.error(f"Missing best_mse in result. Keys: {list(result.keys())}")
+                return  # params can be empty for initial iterations in differential evolution
+            if params is None:
+                params = []
+
+            # Skip processing if params is empty (common in initial DE iterations)
+            if len(params) == 0:
+                logger.debug("Received empty params array - likely initial iteration")
                 return
 
             # Validate calculation parameters structure
@@ -126,9 +133,7 @@ class ModelBasedCalculationStrategy(BestResultStrategy):
             reactions = calc_params["reaction_scheme"]["reactions"]
             if not reactions or len(reactions) == 0:
                 logger.error("Empty reactions list")
-                return
-
-            # Convert dict parameters to list format if needed
+                return  # Convert dict parameters to list format if needed
             if isinstance(params, dict):
                 params = self._convert_dict_params_to_list(params, reactions)
                 if params is None:
@@ -138,16 +143,33 @@ class ModelBasedCalculationStrategy(BestResultStrategy):
                 return
 
             num_reactions = len(reactions)
-            expected_length = 4 * num_reactions  # logA, Ea, model_index, contributions
-            if len(params) < expected_length:
-                logger.error(f"Insufficient params length: got {len(params)}, expected {expected_length}")
-                return
 
-            # Extract parameter arrays
-            logA = params[0 * num_reactions : 1 * num_reactions]
-            Ea = params[1 * num_reactions : 2 * num_reactions]
-            model_index = params[2 * num_reactions : 3 * num_reactions]
-            contributions = params[3 * num_reactions : 4 * num_reactions]
+            # Check if this is the old format (3 params per reaction: logA, Ea, contribution)
+            # or new format (4 params per reaction: logA, Ea, model_index, contribution)
+            expected_length_new = 4 * num_reactions  # New format: logA, Ea, model_index, contributions
+            expected_length_old = 3 * num_reactions  # Old format: logA, Ea, contributions
+
+            if len(params) == expected_length_old:
+                # Old format: 3 parameters per reaction (backward compatibility)
+                logger.debug(f"Using old format: {len(params)} params for {num_reactions} reactions (3 per reaction)")
+                logA = params[0 * num_reactions : 1 * num_reactions]
+                Ea = params[1 * num_reactions : 2 * num_reactions]
+                contributions = params[2 * num_reactions : 3 * num_reactions]
+                # Set default model_index (usually 0 for first model)
+                model_index = [0] * num_reactions
+            elif len(params) == expected_length_new:
+                # New format: 4 parameters per reaction
+                logger.debug(f"Using new format: {len(params)} params for {num_reactions} reactions (4 per reaction)")
+                logA = params[0 * num_reactions : 1 * num_reactions]
+                Ea = params[1 * num_reactions : 2 * num_reactions]
+                model_index = params[2 * num_reactions : 3 * num_reactions]
+                contributions = params[3 * num_reactions : 4 * num_reactions]
+            else:
+                logger.error(
+                    f"Invalid params length: got {len(params)}, "
+                    f"expected {expected_length_old} (old format) or {expected_length_new} (new format)"
+                )
+                return
 
             logger.debug(f"Received new result for best_mse: {best_mse} with params: {params}")
 

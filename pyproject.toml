@@ -37,6 +37,7 @@ black = "^24.8.0"
 
 [tool.poetry.group.dev.dependencies]
 ipykernel = "^6.29.5"
+pytest-qt = "^4.4.0"
 
 [tool.ruff]
 target-version = "py312"
