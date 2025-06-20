@@ -113,6 +113,10 @@ class CalculationSettingsDialog(QDialog):
                 edit_widget = QComboBox()
                 edit_widget.addItems(self.get_options_for_parameter(param_name))
                 edit_widget.setCurrentText(str(default_value))
+            elif isinstance(default_value, tuple):
+                # Handle tuple parameters - display as string but preserve type info
+                text_val = str(default_value) if default_value else "()"
+                edit_widget = QLineEdit(text_val)
             else:
                 text_val = str(default_value) if default_value is not None else "None"
                 edit_widget = QLineEdit(text_val)
@@ -398,6 +402,21 @@ class CalculationSettingsDialog(QDialog):
             return float(text)
         elif isinstance(default_value, bool):
             return text.lower() in ("true", "1", "yes")
+        elif isinstance(default_value, tuple):
+            if text.strip() == "()":
+                return ()
+            try:
+                # Use eval for safe tuple parsing (only for tuples)
+                if text.startswith("(") and text.endswith(")"):
+                    return eval(text)
+                else:
+                    # Try to convert to tuple of floats
+                    parts = text.split(",")
+                    if len(parts) == 2:
+                        return (float(parts[0].strip()), float(parts[1].strip()))
+            except (ValueError, SyntaxError):
+                return default_value
+            return default_value
         else:
             return text
 
