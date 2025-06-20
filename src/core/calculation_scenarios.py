@@ -515,7 +515,7 @@ class ModelBasedTargetFunction:
         self.R = R
         self.stop_event = stop_event
 
-    def __call__(self, params: np.ndarray) -> float:
+    def __call__(self, params: np.ndarray) -> float:  # noqa: C901
         if self.stop_event.is_set():
             return float("inf")
         try:
@@ -523,27 +523,35 @@ class ModelBasedTargetFunction:
             n = self.num_reactions
 
             # Extract raw (unnormalized) contributions
-            raw_contrib = params[3 * n : 4 * n]
+            raw_contrib = params[3 * n : 4 * n].copy()
 
             # Check chain-based contribution constraints for basinhopping
             # Extract reaction chains from the current scheme
             scheme = {"reactions": self.reactions, "components": [{"id": comp_id} for comp_id in self.species_list]}
             chains = extract_chains(scheme)
 
-            # Check that sum of RAW contributions for each chain is within 0.01 of 1.0
-            TOLERANCE = 0.05
+            # Normalize contributions for each chain to sum to 1.0
+            # Apply penalty only for extreme deviations that indicate optimizer instability
+            EXTREME_TOLERANCE = 10.0  # Only penalize if sum is more than 10x off from 1.0
+            normalized_contrib = raw_contrib.copy()
+
             for chain in chains:
                 if len(chain) > 0:  # Skip empty chains
                     chain_contrib_sum = np.sum(raw_contrib[chain])
-                    deviation = abs(chain_contrib_sum - 1.0)
-                    if deviation > TOLERANCE:
-                        # Apply penalty to guide optimizer away from invalid solutions
-                        penalty = 1e12 * (1 + deviation)  # Scale penalty with deviation size
+
+                    # Apply penalty only for extreme deviations (optimization instability)
+                    if chain_contrib_sum <= 0 or abs(chain_contrib_sum - 1.0) > EXTREME_TOLERANCE:
+                        penalty = 1e12 * (1 + abs(chain_contrib_sum - 1.0))
                         logger.debug(
-                            f"Chain contribution constraint violated: chain {chain}, "
-                            f"raw sum={chain_contrib_sum:.4f}, deviation={deviation:.4f}, penalty={penalty}"
+                            f"Extreme chain contribution violation: chain {chain}, "
+                            f"raw sum={chain_contrib_sum:.4f}, penalty={penalty}"
                         )
                         return penalty
+
+                    # Always normalize chain contributions to sum to 1.0
+                    if chain_contrib_sum > 0:
+                        for idx in chain:
+                            normalized_contrib[idx] = raw_contrib[idx] / chain_contrib_sum
 
             for beta_val, exp_mass in zip(self.betas, self.all_exp_masses):
                 if self.stop_event.is_set():
@@ -551,7 +559,7 @@ class ModelBasedTargetFunction:
 
                 mse_i = integrate_ode_for_beta(
                     beta_val,
-                    raw_contrib,
+                    normalized_contrib,  # Use normalized contributions for calculation
                     params,
                     self.species_list,
                     self.reactions,
@@ -567,7 +575,10 @@ class ModelBasedTargetFunction:
                 if total_mse < self.best_mse.value:
                     self.best_mse.value = total_mse
                     del self.best_params[:]
-                    self.best_params.extend(params.tolist())
+                    # Store normalized parameters (with corrected contributions)
+                    normalized_params = params.copy()
+                    normalized_params[3 * n : 4 * n] = normalized_contrib
+                    self.best_params.extend(normalized_params.tolist())
             return total_mse
         except Exception as e:
             logger.error(f"Error in ModelBasedTargetFunction: {e}")

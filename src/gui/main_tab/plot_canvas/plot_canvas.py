@@ -155,9 +155,13 @@ class PlotCanvas(QWidget, PlotInteractionMixin, PlotStylingMixin):
 
         self.add_or_update_line("mse_line", times, mses, color="red", marker="o", linestyle="-")
 
+        # Configure time axis formatting
         self.axes.xaxis.set_major_locator(mdates.AutoDateLocator())
         self.axes.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
+
+        # Ensure the canvas is refreshed and dates are properly formatted
         self.figure.autofmt_xdate()
+        self.canvas.draw()
 
     @pyqtSlot(tuple, list)
     def plot_reaction(self, keys, values):

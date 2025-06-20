@@ -17,8 +17,8 @@ class ReactionDefaults:
     Ea_default: float = 120
     log_A_default: float = 8
     contribution_default: float = 0.5
-    Ea_range: tuple = (1, 2000)
-    log_A_range: tuple = (-100, 100)
+    Ea_range: tuple = (50, 200)
+    log_A_range: tuple = (-20, 20)
     contribution_range: tuple = (-1, 1)
 
 
