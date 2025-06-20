@@ -51,20 +51,20 @@ class OperationType(Enum):
 
 
 MODEL_BASED_DIFFERENTIAL_EVOLUTION_DEFAULT_KWARGS = {
-    "strategy": "best1bin",
-    "maxiter": 1000,
-    "popsize": 5,
-    "tol": 0.01,
-    "mutation": (0.5, 1),
-    "recombination": 0.7,
+    "strategy": "best1exp",
+    "maxiter": 500,
+    "popsize": 24,
+    "tol": 0.015,
+    "mutation": (0.3, 0.9),
+    "recombination": 0.8,
     "seed": None,
     "callback": None,
     "disp": True,
-    "polish": False,
+    "polish": True,
     "init": "latinhypercube",
     "atol": 0,
-    "updating": "deferred",
-    "workers": 1,
+    "updating": "immediate",  # КРИТИЧНО: улучшает параллелизацию
+    "workers": 6,
     "constraints": (),
 }
 
@@ -741,18 +741,18 @@ MAX_STEPSIZE = 2.0
 
 # Basinhopping optimization configuration
 DEFAULT_BASINHOPPING_PARAMS = {
-    "niter": 100,  # Number of basinhopping iterations
-    "T": 1.0,  # Temperature for Metropolis criterion
-    "stepsize": 0.5,  # Step size for BatchTakeStep
-    "batch_size": None,  # Auto-detect based on CPU count
+    "niter": 150,  # Увеличено для лучшего исследования пространства параметров
+    "T": 2.5,  # Выше температура для лучшего исследования и выхода из локальных минимумов
+    "stepsize": 0.8,  # Больший шаг для более эффективного поиска
+    "batch_size": 8,  # Больший batch для лучшего параллелизма (вместо None)
     "minimizer_kwargs": {
         "method": "L-BFGS-B",  # Local minimizer
-        "options": {"maxiter": 100},  # Local optimizer iterations
+        "options": {"maxiter": 150},  # Увеличено с 100 для лучшей локальной сходимости
     },
     "take_step": None,  # Will be set to BatchTakeStep instance
     "accept_test": None,  # Default Metropolis criterion
     "callback": None,  # Will be set to progress callback
-    "interval": 50,  # Callback interval
+    "interval": 25,  # Более частые обновления прогресса (было 50)
     "disp": True,  # Display convergence info
     "niter_success": None,  # Stop after this many successful iterations
     "seed": None,  # Random seed

@@ -144,7 +144,13 @@ class PlotCanvas(QWidget, PlotInteractionMixin, PlotStylingMixin):
         """Plot MSE history over time."""
         if not mse_data:
             return
-        times, mses = zip(*mse_data)
+
+        # Extract datetime objects and MSE values directly
+        if len(mse_data) > 0:
+            times = [timestamp for timestamp, _ in mse_data]
+            mses = [mse for _, mse in mse_data]
+        else:
+            return
 
         self.axes.clear()
         self.lines.clear()
@@ -155,12 +161,18 @@ class PlotCanvas(QWidget, PlotInteractionMixin, PlotStylingMixin):
 
         self.add_or_update_line("mse_line", times, mses, color="red", marker="o", linestyle="-")
 
-        # Configure time axis formatting
+        # Configure the axes for proper display
+        self.axes.grid(True, alpha=0.3)
+
+        # Format time axis to show actual time (HH:MM:SS)
+
+        # Set major locator and formatter for time display
         self.axes.xaxis.set_major_locator(mdates.AutoDateLocator())
         self.axes.xaxis.set_major_formatter(mdates.DateFormatter("%H:%M:%S"))
 
-        # Ensure the canvas is refreshed and dates are properly formatted
+        # Rotate time labels for better readability
         self.figure.autofmt_xdate()
+
         self.canvas.draw()
 
     @pyqtSlot(tuple, list)
